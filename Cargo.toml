@@ -1,12 +1,12 @@
 [package]
-name = "jbapply"
+name = "jbsync"
 version = "0.1.0"
 edition = "2021"
 description = "Declaratively apply JetBrains IDE settings from a single JSON config, cross-platform."
 license = "MIT"
 
 [[bin]]
-name = "jbapply"
+name = "jbsync"
 path = "src/main.rs"
 
 [dependencies]

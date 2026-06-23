@@ -1,6 +1,6 @@
 //! End-to-end tests that drive the real compiled binary against seeded copies
 //! of real JetBrains config files in a temp directory. Nothing here touches the
-//! user's actual config — everything is redirected via JBAPPLY_CONFIG_HOME.
+//! user's actual config — everything is redirected via JBSYNC_CONFIG_HOME.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn bin() -> &'static str {
-	env!("CARGO_BIN_EXE_jbapply")
+	env!("CARGO_BIN_EXE_jbsync")
 }
 
 fn write(path: PathBuf, content: &str) {
@@ -54,7 +54,7 @@ const CONFIG: &str = r#"{
 
 /// Write the config + referenced scheme file into a temp "source" dir.
 fn write_config(dir: &Path) -> PathBuf {
-	let cfg = dir.join("jbapply.json");
+	let cfg = dir.join("jbsync.json");
 	write(cfg.clone(), CONFIG);
 	write(dir.join("Verona Dark.icls"), include_str!("fixtures/Verona Dark.icls"));
 	cfg
@@ -63,18 +63,18 @@ fn write_config(dir: &Path) -> PathBuf {
 fn run(base: &Path, args: &[&str]) -> Output {
 	Command::new(bin())
 		.args(args)
-		.env("JBAPPLY_CONFIG_HOME", base)
+		.env("JBSYNC_CONFIG_HOME", base)
 		.output()
-		.expect("failed to run jbapply")
+		.expect("failed to run jbsync")
 }
 
 fn run_env(base: &Path, extra: &[(&str, &str)], args: &[&str]) -> Output {
 	let mut c = Command::new(bin());
-	c.args(args).env("JBAPPLY_CONFIG_HOME", base);
+	c.args(args).env("JBSYNC_CONFIG_HOME", base);
 	for (k, v) in extra {
 		c.env(k, v);
 	}
-	c.output().expect("failed to run jbapply")
+	c.output().expect("failed to run jbsync")
 }
 
 fn read(p: PathBuf) -> String {
@@ -373,13 +373,13 @@ fn plugin_install_flow_skips_present_and_is_idempotent() {
 	fs::create_dir_all(&data).unwrap();
 
 	// A fake launcher that mimics `installPlugins` by writing each plugin's
-	// descriptor into the data dir (no network). It reads JBAPPLY_DATA_HOME,
-	// which jbapply inherits and passes through to this child process.
+	// descriptor into the data dir (no network). It reads JBSYNC_DATA_HOME,
+	// which jbsync inherits and passes through to this child process.
 	let launcher = tmp.path().join("idea-fake.sh");
 	write(
 		launcher.clone(),
 		"#!/usr/bin/env bash\nset -e\n[ \"$1\" = installPlugins ] || exit 2\nshift\n\
-         dir=\"$JBAPPLY_DATA_HOME/IntelliJIdea2026.1\"\n\
+         dir=\"$JBSYNC_DATA_HOME/IntelliJIdea2026.1\"\n\
          for id in \"$@\"; do\n  case \"$id\" in http*) continue;; esac\n  \
          mkdir -p \"$dir/$id/META-INF\"\n  \
          printf '<idea-plugin><id>%s</id></idea-plugin>' \"$id\" > \"$dir/$id/META-INF/plugin.xml\"\n\
@@ -403,8 +403,8 @@ fn plugin_install_flow_skips_present_and_is_idempotent() {
 	);
 
 	let extra = [
-		("JBAPPLY_DATA_HOME", data.to_str().unwrap()),
-		("JBAPPLY_LAUNCHER", launcher.to_str().unwrap()),
+		("JBSYNC_DATA_HOME", data.to_str().unwrap()),
+		("JBSYNC_LAUNCHER", launcher.to_str().unwrap()),
 	];
 
 	// before: only com.foo.bar is missing; the already-present one is skipped
@@ -445,10 +445,10 @@ fn missing_launcher_errors_clearly_on_apply() {
 		cfg.clone(),
 		r#"{ "targets":[{"product":"IntelliJIdea","version":"2026.1"}], "plugins": { "install": ["com.foo.bar"] } }"#,
 	);
-	// JBAPPLY_LAUNCHER points nowhere, PATH search won't find "idea"
+	// JBSYNC_LAUNCHER points nowhere, PATH search won't find "idea"
 	let extra = [
-		("JBAPPLY_DATA_HOME", data.to_str().unwrap()),
-		("JBAPPLY_LAUNCHER", "/nonexistent/idea"),
+		("JBSYNC_DATA_HOME", data.to_str().unwrap()),
+		("JBSYNC_LAUNCHER", "/nonexistent/idea"),
 		("PATH", "/nonexistent"),
 	];
 	let out = run_env(&base, &extra, &["apply", cfg.to_str().unwrap(), "--os", "linux"]);
@@ -460,7 +460,7 @@ fn missing_launcher_errors_clearly_on_apply() {
 fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	// Two IDEs share a scheme named "ABC" with different language attributes.
 	let tmp = tempfile::tempdir().unwrap();
-	let base = tmp.path().join("JetBrains"); // JBAPPLY_CONFIG_HOME
+	let base = tmp.path().join("JetBrains"); // JBSYNC_CONFIG_HOME
 	let data = tmp.path().join("data");
 	fs::create_dir_all(&data).unwrap();
 
@@ -487,7 +487,7 @@ fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBAPPLY_DATA_HOME", data.to_str().unwrap())],
+		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
 		&["create", "--out", out.to_str().unwrap(), "--primary", "WebStorm"],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
@@ -507,12 +507,12 @@ fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	assert!(!merged.contains(r#"value="ffffff""#));
 
 	// The config snapshots both targets, the font, and the active scheme reference.
-	let cfg = read(out.join("jbapply.json"));
+	let cfg = read(out.join("jbsync.json"));
 	assert!(cfg.contains(r#""product": "WebStorm""#));
 	assert!(cfg.contains(r#""product": "RustRover""#));
 	assert!(cfg.contains(r#""name": "ABC""#));
 	assert!(cfg.contains(r#""file": "color-schemes/ABC.icls""#));
-	assert!(out.join("jbapply.schema.json").exists());
+	assert!(out.join("jbsync.schema.json").exists());
 }
 
 #[test]
@@ -614,7 +614,7 @@ fn apply_copies_managed_files_verbatim() {
 		"<application>\n  <component name=\"x\" />\n</application>",
 	);
 	write(dot.join("templates/React.xml"), "<templateSet group=\"React\" />");
-	let cfg = dot.join("jbapply.json");
+	let cfg = dot.join("jbsync.json");
 	write(
 		cfg.clone(),
 		r#"{ "targets": [{ "product": "IntelliJIdea", "version": "2026.1" }],
@@ -655,12 +655,12 @@ fn create_captures_settings_theme_and_managed_files() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBAPPLY_DATA_HOME", data.to_str().unwrap())],
+		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
 		&["create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
 
-	let cfg = read(out.join("jbapply.json"));
+	let cfg = read(out.join("jbsync.json"));
 	assert!(cfg.contains(r#""editor.codeVision": false"#), "settings: {cfg}");
 	assert!(cfg.contains(r#""theme": "ExperimentalDark""#), "theme: {cfg}");
 	assert!(cfg.contains(r#""options/customization.xml""#), "files: {cfg}");
@@ -692,7 +692,7 @@ fn create_skips_empty_user_override_schemes() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBAPPLY_DATA_HOME", data.to_str().unwrap())],
+		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
 		&["create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
@@ -729,7 +729,7 @@ fn create_skips_bundled_only_template_groups() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBAPPLY_DATA_HOME", data.to_str().unwrap())],
+		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
 		&["create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
@@ -737,7 +737,7 @@ fn create_skips_bundled_only_template_groups() {
 	// Only the custom group is copied; the all-disabled one is skipped.
 	assert!(out.join("templates/Custom.xml").exists());
 	assert!(!out.join("templates/Disabled.xml").exists());
-	assert!(read(out.join("jbapply.json")).contains(r#""templates""#));
+	assert!(read(out.join("jbsync.json")).contains(r#""templates""#));
 }
 
 #[test]
@@ -776,11 +776,11 @@ fn create_allows_no_primary_for_single_ide() {
 	let data = tmp.path().join("data");
 	let res = run_env(
 		&base,
-		&[("JBAPPLY_DATA_HOME", data.to_str().unwrap())],
+		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
 		&["create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
-	assert!(out.join("jbapply.json").exists());
+	assert!(out.join("jbsync.json").exists());
 }
 
 #[test]
@@ -792,7 +792,7 @@ fn list_discovers_android_studio_under_google_vendor() {
 	write(jb.join("IntelliJIdea2026.1/options/.keep"), "");
 	write(tmp.path().join("Google/AndroidStudio2026.1.1/options/.keep"), "");
 
-	let out = run(&jb, &["list"]); // JBAPPLY_CONFIG_HOME = the JetBrains dir
+	let out = run(&jb, &["list"]); // JBSYNC_CONFIG_HOME = the JetBrains dir
 	assert!(out.status.success());
 	let s = String::from_utf8_lossy(&out.stdout);
 	assert!(s.contains("IntelliJIdea2026.1"), "got: {s}");

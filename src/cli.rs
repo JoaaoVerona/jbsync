@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
 #[command(
-	name = "jbapply",
+	name = "jbsync",
 	version,
 	about = "Apply JetBrains IDE settings from one JSON config, cross-platform."
 )]
@@ -78,7 +78,7 @@ struct KeymapArgs {
 
 #[derive(Args)]
 struct CreateArgs {
-	/// Output directory for jbapply.json + merged scheme files.
+	/// Output directory for jbsync.json + merged scheme files.
 	#[arg(long)]
 	out: PathBuf,
 	/// Restrict to these products (repeatable); default: every discovered IDE.
@@ -305,7 +305,7 @@ fn print_diff(ch: &FileChange) {
 fn run_install(inst: &PluginInstall) -> Result<()> {
 	let launcher = inst.launcher.as_ref().ok_or_else(|| {
 		anyhow!(
-			"cannot find the IDE launcher for {} — add it to PATH or set JBAPPLY_LAUNCHER",
+			"cannot find the IDE launcher for {} — add it to PATH or set JBSYNC_LAUNCHER",
 			inst.product
 		)
 	})?;
@@ -345,13 +345,13 @@ fn write_change(ch: &FileChange, backup: bool) -> Result<()> {
 }
 
 fn backup_file(path: &Path, content: &str, rel: &str) -> Result<()> {
-	// <ide-dir>/.jbapply-backups/<unix-secs>/<rel>
+	// <ide-dir>/.jbsync-backups/<unix-secs>/<rel>
 	let ide_dir = backup_root(path, rel);
 	let ts = SystemTime::now()
 		.duration_since(UNIX_EPOCH)
 		.map(|d| d.as_secs())
 		.unwrap_or(0);
-	let dest = ide_dir.join(".jbapply-backups").join(ts.to_string()).join(rel);
+	let dest = ide_dir.join(".jbsync-backups").join(ts.to_string()).join(rel);
 	if let Some(parent) = dest.parent() {
 		std::fs::create_dir_all(parent)?;
 	}
@@ -370,7 +370,7 @@ fn backup_root(path: &Path, rel: &str) -> PathBuf {
 }
 
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
-	let tmp = path.with_extension("jbapply-tmp");
+	let tmp = path.with_extension("jbsync-tmp");
 	std::fs::write(&tmp, content).with_context(|| format!("writing {}", tmp.display()))?;
 	std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
 	Ok(())

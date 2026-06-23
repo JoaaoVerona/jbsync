@@ -8,7 +8,7 @@
 //!   data:    Linux ~/.local/share/<Vendor>, macOS ~/Library/Application Support/<Vendor>,
 //!            Windows %APPDATA%\<Vendor>   (data = installed plugins)
 //!
-//! `JBAPPLY_CONFIG_HOME` / `JBAPPLY_DATA_HOME` override the JetBrains vendor dir;
+//! `JBSYNC_CONFIG_HOME` / `JBSYNC_DATA_HOME` override the JetBrains vendor dir;
 //! the Google vendor dir is resolved as its sibling.
 
 use anyhow::{anyhow, Context, Result};
@@ -37,18 +37,18 @@ pub fn vendor(product: &str) -> &'static str {
 	}
 }
 
-/// The JetBrains config vendor dir (overridable via `JBAPPLY_CONFIG_HOME`).
+/// The JetBrains config vendor dir (overridable via `JBSYNC_CONFIG_HOME`).
 pub fn jetbrains_base() -> Result<PathBuf> {
-	if let Ok(over) = std::env::var("JBAPPLY_CONFIG_HOME") {
+	if let Ok(over) = std::env::var("JBSYNC_CONFIG_HOME") {
 		return Ok(PathBuf::from(over));
 	}
 	let cfg = dirs::config_dir().ok_or_else(|| anyhow!("cannot determine OS config dir"))?;
 	Ok(cfg.join("JetBrains"))
 }
 
-/// The JetBrains data (installed-plugins) vendor dir (overridable via `JBAPPLY_DATA_HOME`).
+/// The JetBrains data (installed-plugins) vendor dir (overridable via `JBSYNC_DATA_HOME`).
 pub fn jetbrains_data_base() -> Result<PathBuf> {
-	if let Ok(over) = std::env::var("JBAPPLY_DATA_HOME") {
+	if let Ok(over) = std::env::var("JBSYNC_DATA_HOME") {
 		return Ok(PathBuf::from(over));
 	}
 	let data = dirs::data_dir().ok_or_else(|| anyhow!("cannot determine OS data dir"))?;

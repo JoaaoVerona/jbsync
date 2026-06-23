@@ -39,7 +39,7 @@
       ]
     },
     "cli": {
-      "description": "Run the jbapply CLI, e.g. run cli list  or  run cli check ./jbapply.json",
+      "description": "Run the jbsync CLI, e.g. run cli list  or  run cli check ./jbsync.json",
       "commands": [
         "cargo run --quiet -- {{ ARGS }}"
       ]

@@ -1,4 +1,4 @@
-# jbapply — notes for future work
+# jbsync — notes for future work
 
 Rust CLI that applies JetBrains IDE settings from one JSON config, cross-platform.
 Replaces JetBrains Settings Sync with a single Git-tracked source of truth.
@@ -38,7 +38,7 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
   - `plugins.rs` — disable (file) + ensure-install (detect installed IDs by reading
     `META-INF/plugin.xml` unpacked or inside `lib/*.jar`, then `installPlugins` the missing).
 - `src/launcher.rs` — find the IDE launcher (override → PATH → Toolbox `scripts/`).
-- `src/discovery.rs` — config base (`JBAPPLY_CONFIG_HOME`) + data/plugins base (`JBAPPLY_DATA_HOME`).
+- `src/discovery.rs` — config base (`JBSYNC_CONFIG_HOME`) + data/plugins base (`JBSYNC_DATA_HOME`).
 - `src/extract.rs` — `create`: reverse of apply. Reads scalars (via `xmlpatch::get_*`),
   reverses the keymap into bindings, unions installed plugins, and orchestrates scheme merge.
   Read-only w.r.t. IDEs; only writes the output dir. `Config` derives `Serialize` for this.
@@ -51,7 +51,7 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
 - `src/appliers/files.rs` — verbatim copy of `config.files` (whole self-contained settings
   files/dirs: menus, templates, inspections, grazie, …). `create` collects a curated set.
 - `src/cli.rs` — `apply` / `check` / `create` / `list` / `keymap`; diff, backup, atomic write, run installs.
-- `schema/jbapply.schema.json` — user-facing JSON Schema (keep in sync with `src/config.rs`).
+- `schema/jbsync.schema.json` — user-facing JSON Schema (keep in sync with `src/config.rs`).
 - `tests/fixtures/` — real (sanitized) JetBrains files used by integration tests.
 
 ## Conventions / gotchas

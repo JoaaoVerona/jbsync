@@ -1,4 +1,4 @@
-//! `create`: snapshot the current IDE settings into a portable jbapply config
+//! `create`: snapshot the current IDE settings into a portable jbsync config
 //! plus copied/merged scheme files. The reverse of `apply` — and strictly
 //! read-only with respect to the IDEs (it only writes into the output dir).
 
@@ -14,7 +14,7 @@ use quick_xml::reader::Reader;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_JSON: &str = include_str!("../schema/jbapply.schema.json");
+const SCHEMA_JSON: &str = include_str!("../schema/jbsync.schema.json");
 
 pub struct CreateOptions {
 	pub out_dir: PathBuf,
@@ -65,9 +65,9 @@ pub fn create(opts: &CreateOptions) -> Result<()> {
 
 	// Write the config + a copy of the schema for editor autocomplete.
 	let json = serde_json::to_string_pretty(&cfg)? + "\n";
-	let cfg_path = opts.out_dir.join("jbapply.json");
+	let cfg_path = opts.out_dir.join("jbsync.json");
 	std::fs::write(&cfg_path, json).with_context(|| format!("writing {}", cfg_path.display()))?;
-	std::fs::write(opts.out_dir.join("jbapply.schema.json"), SCHEMA_JSON)?;
+	std::fs::write(opts.out_dir.join("jbsync.schema.json"), SCHEMA_JSON)?;
 
 	println!("wrote {}", cfg_path.display());
 	println!(
@@ -344,7 +344,7 @@ fn build_config(
 	let keymap = extract_keymap(dir, portable_keymap);
 
 	Ok(Config {
-		schema: Some("./jbapply.schema.json".to_string()),
+		schema: Some("./jbsync.schema.json".to_string()),
 		// Plugins are emitted PER TARGET (each IDE has its own disabled/installed
 		// set), so there is no global plugins block to over-disable.
 		targets: ides.iter().map(extract_target_plugins).collect(),
