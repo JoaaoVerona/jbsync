@@ -1,0 +1,3 @@
+-Xmx2048m
+-Dide.managed.by.toolbox=/opt/jetbrains-toolbox/bin/jetbrains-toolbox
+-Dtoolbox.notification.token=PLACEHOLDER-TOKEN

@@ -1,0 +1,23 @@
+[package]
+name = "jbapply"
+version = "0.1.0"
+edition = "2021"
+description = "Declaratively apply JetBrains IDE settings from a single JSON config, cross-platform."
+license = "MIT"
+
+[[bin]]
+name = "jbapply"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.37"
+dirs = "5"
+similar = "2"
+anyhow = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

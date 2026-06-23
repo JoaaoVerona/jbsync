@@ -1,0 +1,88 @@
+{
+  "$schema": "https://github.com/Skiley/runfile/releases/latest/download/v0.schema.json",
+  "targets": {
+    "build": {
+      "description": "Build the project (pass --release for an optimized build)",
+      "commands": [
+        "cargo build {{ FLAG.release ? '--release' : }}"
+      ]
+    },
+    "build:release": {
+      "description": "Build an optimized release binary",
+      "commands": [
+        "cargo build --release {{ ARGS }}"
+      ]
+    },
+    "test": {
+      "description": "Run all tests (unit + integration). Extra args pass through, e.g. run test keymap",
+      "commands": [
+        "cargo test {{ ARGS }}"
+      ]
+    },
+    "fmt": {
+      "description": "Format the code with rustfmt",
+      "commands": [
+        "cargo fmt"
+      ]
+    },
+    "lint": {
+      "description": "Check formatting and run clippy with warnings denied",
+      "commands": [
+        "cargo fmt --check",
+        "cargo clippy --all-targets -- -D warnings"
+      ]
+    },
+    "check": {
+      "description": "Type-check everything without producing binaries",
+      "commands": [
+        "cargo check --all-targets"
+      ]
+    },
+    "cli": {
+      "description": "Run the jbapply CLI, e.g. run cli list  or  run cli check ./jbapply.json",
+      "commands": [
+        "cargo run --quiet -- {{ ARGS }}"
+      ]
+    },
+    "clean": {
+      "description": "Remove build artifacts",
+      "commands": [
+        "cargo clean"
+      ]
+    },
+    "ci": {
+      "description": "Full pre-push suite: lint + tests",
+      "commands": [
+        "@lint",
+        "@test"
+      ]
+    },
+    "release": {
+      "description": "Bump the version (major/minor/patch) in Cargo.toml, tag, and push so CI builds the release",
+      "forceShell": "sh",
+      "commands": [
+        "{{ define(part, one_of(ARGS, 'major', 'minor', 'patch')) }}",
+        "{{ define(cargo, read_file('Cargo.toml')) }}",
+        "{{ define(cur, regex_capture(VAR.cargo, '(?m)^version = \"([^\"]+)\"', '1')) }}",
+        {
+          "match": "{{ VAR.part }}",
+          "cases": {
+            "major": "{{ define(new, concat(add(nth(VAR.cur, '.', '0'), '1'), '.0.0')) }}",
+            "minor": "{{ define(new, concat(nth(VAR.cur, '.', '0'), '.', add(nth(VAR.cur, '.', '1'), '1'), '.0')) }}",
+            "patch": "{{ define(new, concat(nth(VAR.cur, '.', '0'), '.', nth(VAR.cur, '.', '1'), '.', add(nth(VAR.cur, '.', '2'), '1'))) }}"
+          }
+        },
+        "{{ define(updated, regex_replace(VAR.cargo, '(?m)^version = \"[^\"]+\"', concat('version = \"', VAR.new, '\"'))) }}",
+        "{{ write_file('Cargo.toml', VAR.updated) }}",
+        "cargo update --workspace",
+        "echo 'Bumped: version {{ VAR.cur }} -> {{ VAR.new }}'",
+        "git commit Cargo.toml Cargo.lock -m {{ shell_quote(concat('bump to ', VAR.new)) }}",
+        "{{ define(tag, concat('v', VAR.new)) }}",
+        "echo Tagging {{ VAR.tag }}",
+        "git tag {{ shell_quote(VAR.tag) }}",
+        "git push",
+        "git push --tags"
+      ]
+    }
+  }
+}

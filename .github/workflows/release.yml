@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release"
+        required: true
+
+jobs:
+  release:
+    uses: Skiley/rust-binary-publish/.github/workflows/release.yml@v1.0.0
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      bin: jbapply
+      extra-assets: schema/jbapply.schema.json
+      publish-npm: false
+      npm-package: "@skiley/jbapply"
+      npm-description: "Declaratively apply JetBrains IDE settings from one JSON config, cross-platform"
+      tag: ${{ inputs.tag || github.ref_name }}
