@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "jbapply config",
-  "description": "Declarative JetBrains IDE settings applied by jbapply.",
+  "title": "jbsync config",
+  "description": "Declarative JetBrains IDE settings applied by jbsync.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
