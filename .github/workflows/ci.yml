@@ -10,14 +10,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
       - uses: Skiley/runfile/.github/actions/setup@master
-      - run: run lint
+      - run: run check
 
   test:
     name: Test (${{ matrix.os }})

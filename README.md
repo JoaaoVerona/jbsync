@@ -14,7 +14,7 @@ of truth** and the IDEs **read-only consumers**:
 
 - One writer → no silent overwrites between machines.
 - Reviewable diffs in version control.
-- Per-OS keymaps are *generated* from one canonical definition, so they can't
+- Per-OS keymaps are _generated_ from one canonical definition, so they can't
   drift or get lost independently.
 
 ## How it works
@@ -45,7 +45,7 @@ cargo build --release
 ```
 
 This repo also ships a [Runfile](Runfile.json) — `run build`, `run test`,
-`run lint`, `run ci` — if you have the [`run`](https://github.com/Skiley/runfile)
+`run lint` — if you have the [`run`](https://github.com/Skiley/runfile)
 task runner installed.
 
 ## Usage
@@ -83,7 +83,7 @@ Everything but `jbsync.json` / `jbsync.schema.json` is organised into
 subdirectories. `create` is strictly read-only with respect to your IDEs — it
 only writes into `DIR`.
 
-**Cross-IDE scheme merge.** Different IDEs flesh out the *same* named scheme with
+**Cross-IDE scheme merge.** Different IDEs flesh out the _same_ named scheme with
 different language pieces — WebStorm's "ABC" carries `JS.*`/`CSS.*` attributes,
 RustRover's carries `org.rust.*`, Android Studio's carries Kotlin/Compose. `create`
 groups same-named schemes across all IDEs and unions their `<colors>` and
@@ -130,7 +130,7 @@ there and runs the IDE's `installPlugins` CLI only for the missing ones:
 
 **Per-target overrides.** A `plugins` block on a `targets[]` entry is **unioned**
 with the top-level one for that IDE only — so you can disable Spring in IntelliJ
-without touching WebStorm. (Union means a per-target block can *add* to the
+without touching WebStorm. (Union means a per-target block can _add_ to the
 global set, not remove from it — keep IDE-specific entries out of the global
 block.) `create` uses this to emit each IDE's real plugin set per-target.
 
@@ -183,11 +183,11 @@ Beyond the typed sections, two general mechanisms cover the long tail:
   recursively) installed verbatim. Don't list files that other sections
   option-patch (e.g. `editor.xml`, `ui.lnf.xml`). `create` auto-collects a
   curated managed set from the primary IDE.
-  - **Live templates** get special handling on `create`: the `templates/` dir is
-    often dominated by records of *disabled bundled* templates (every entry
-    `deactivated="true"`), not custom content, so `create` only copies template
-    groups that contain at least one active template. Add `"templates"` to
-    `files` manually if you want the full dir copied regardless.
+    - **Live templates** get special handling on `create`: the `templates/` dir is
+      often dominated by records of _disabled bundled_ templates (every entry
+      `deactivated="true"`), not custom content, so `create` only copies template
+      groups that contain at least one active template. Add `"templates"` to
+      `files` manually if you want the full dir copied regardless.
 
 ### Environment overrides
 
@@ -217,11 +217,11 @@ writes a complete one snapshotted from your own IDEs.
 
 Keystrokes use modifiers + a key, joined by `+` or spaces:
 
-| Token | Resolves to |
-|-------|-------------|
-| `mod` | **Ctrl** on Linux/Windows, **Cmd** on macOS (platform-native) |
-| `ctrl` | literal Control on **every** OS |
-| `meta`/`cmd`/`win`, `alt`/`option`, `shift` | literal |
+| Token                                       | Resolves to                                                   |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| `mod`                                       | **Ctrl** on Linux/Windows, **Cmd** on macOS (platform-native) |
+| `ctrl`                                      | literal Control on **every** OS                               |
+| `meta`/`cmd`/`win`, `alt`/`option`, `shift` | literal                                                       |
 
 This captures the common real-world setup: native actions (`$Copy`, `$Paste`,
 …) use `mod` so they become Cmd on macOS, while your custom muscle-memory
@@ -254,7 +254,7 @@ can have both (e.g. `["alt+enter", "button1+doubleClick"]`).
 Modeled today: editor/terminal/UI fonts, a curated set of UI + editor-behavior
 toggles, registry escape-hatch, color scheme + code style install/activate,
 plugin install (ensure-present) + disable, vmoptions heap/extra lines, and full
-per-OS keymap generation. Deliberately **not** modeled: plugin *uninstall* (the
+per-OS keymap generation. Deliberately **not** modeled: plugin _uninstall_ (the
 CLI can't), and every obscure `options/*.xml` flag — the philosophy is to
 JSON-model only stable scalars and treat big artifacts as managed files.
 
