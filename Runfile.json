@@ -21,6 +21,17 @@
 			"description": "Run the jbsync CLI, e.g. run cli list  or  run cli check ./jbsync.json",
 			"commands": "cargo run --quiet -- {{ ARGS }}"
 		},
+		"install": {
+			"description": "Build a release binary and install it to ~/.local/bin",
+			"forceShell": "sh",
+			"commands": [
+				"cargo build --release",
+				{ "if": "{{ RUN.os == 'windows' }}", "then": "{{ define(bin, 'jbsync.exe') }}", "else": "{{ define(bin, 'jbsync') }}" },
+				"mkdir -p ~/.local/bin",
+				"cp target/release/{{ VAR.bin }} ~/.local/bin/{{ VAR.bin }}",
+				"echo Installed {{ VAR.bin }} to ~/.local/bin"
+			]
+		},
 		"lint": {
 			"description": "Format the code and run clippy with warnings denied",
 			"commands": ["cargo fmt", "cargo clippy --all-targets -- -D warnings"]

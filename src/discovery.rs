@@ -103,14 +103,23 @@ pub fn list_product_versions(base: &Path, product: &str) -> Result<Vec<(String, 
 		}
 		let name = entry.file_name().to_string_lossy().into_owned();
 		if let Some(ver) = name.strip_prefix(product) {
-			// The remainder must start with a digit, else "IntelliJIdea" would
-			// also swallow a hypothetical "IntelliJIdeaEdu".
-			if ver.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+			// The remainder must be a pure version string ("2026.1", "2026.1.1").
+			// This rejects a different product whose name extends this one
+			// ("IntelliJIdeaEdu") and — crucially — user-made backup copies like
+			// "IntelliJIdea2026.1-backup", which must not be detected as an IDE.
+			if is_version_string(ver) {
 				out.push((ver.to_string(), entry.path()));
 			}
 		}
 	}
 	Ok(out)
+}
+
+/// True for a JetBrains config-dir version suffix: starts with a digit and is
+/// only digits and dots (e.g. "2026.1", "2026.1.1"). Rejects "Edu", EAP, and
+/// backup-copy suffixes like "2026.1-backup".
+fn is_version_string(s: &str) -> bool {
+	s.chars().next().is_some_and(|c| c.is_ascii_digit()) && s.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 /// (product, version, path) for every recognised IDE, across vendors.
@@ -132,4 +141,40 @@ fn version_key(v: &str) -> Vec<u32> {
 		.filter(|s| !s.is_empty())
 		.map(|s| s.parse().unwrap_or(0))
 		.collect()
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn version_string_accepts_real_versions_only() {
+		assert!(is_version_string("2026.1"));
+		assert!(is_version_string("2026.1.1"));
+		assert!(is_version_string("2024.3"));
+		// a user-made backup copy of a config dir is NOT an IDE
+		assert!(!is_version_string("2026.1-backup"));
+		assert!(!is_version_string("2026.1-copy"));
+		// a longer product name ("IntelliJIdeaEdu") leaves a non-version remainder
+		assert!(!is_version_string("Edu"));
+		assert!(!is_version_string(""));
+	}
+
+	#[test]
+	fn list_product_versions_ignores_backup_dirs() {
+		let tmp = std::env::temp_dir().join(format!("jbsync-disco-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&tmp);
+		std::fs::create_dir_all(tmp.join("IntelliJIdea2026.1")).unwrap();
+		std::fs::create_dir_all(tmp.join("IntelliJIdea2026.1-backup")).unwrap();
+		std::fs::create_dir_all(tmp.join("IntelliJIdeaEdu2026.1")).unwrap();
+		let mut found = list_product_versions(&tmp, "IntelliJIdea").unwrap();
+		found.sort();
+		let versions: Vec<_> = found.iter().map(|(v, _)| v.as_str()).collect();
+		assert_eq!(
+			versions,
+			vec!["2026.1"],
+			"only the real IDE dir, not the -backup/Edu ones"
+		);
+		let _ = std::fs::remove_dir_all(&tmp);
+	}
 }

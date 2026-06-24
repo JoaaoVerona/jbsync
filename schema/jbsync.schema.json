@@ -27,6 +27,11 @@
 					"plugins": {
 						"description": "Per-target plugin overrides, merged (unioned) with the top-level plugins.",
 						"$ref": "#/$defs/plugins"
+					},
+					"files": {
+						"type": "array",
+						"description": "IDE-specific files copied verbatim into THIS IDE only (e.g. window layouts). Each entry is the IDE-relative destination path; the source lives at targets/<product>/<path> next to the config. Unlike the top-level files, these are not shared across IDEs.",
+						"items": { "type": "string" }
 					}
 				}
 			}

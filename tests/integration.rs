@@ -632,6 +632,39 @@ fn apply_copies_managed_files_verbatim() {
 }
 
 #[test]
+fn apply_copies_per_target_files_to_each_ide_only() {
+	// Window layouts are IDE-specific: each target's file lives under
+	// targets/<product>/ and must land only in that IDE — never cross-contaminate.
+	let tmp = tempfile::tempdir().unwrap();
+	let base = tmp.path().join("JetBrains");
+	write(base.join("IntelliJIdea2026.1/options/.keep"), "");
+	write(base.join("WebStorm2026.1/options/.keep"), "");
+	let dot = tmp.path().join("dot");
+	write(dot.join("targets/IntelliJIdea/options/window.layouts.xml"), "IJ-LAYOUT");
+	write(dot.join("targets/WebStorm/options/window.layouts.xml"), "WS-LAYOUT");
+	let cfg = dot.join("jbsync.json");
+	write(
+		cfg.clone(),
+		r#"{ "targets": [
+            { "product": "IntelliJIdea", "version": "2026.1", "files": ["options/window.layouts.xml"] },
+            { "product": "WebStorm", "version": "2026.1", "files": ["options/window.layouts.xml"] }
+        ] }"#,
+	);
+	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+		.status
+		.success());
+	// each IDE gets ITS OWN layout, not the other's
+	assert_eq!(
+		read(base.join("IntelliJIdea2026.1/options/window.layouts.xml")),
+		"IJ-LAYOUT"
+	);
+	assert_eq!(
+		read(base.join("WebStorm2026.1/options/window.layouts.xml")),
+		"WS-LAYOUT"
+	);
+}
+
+#[test]
 fn create_captures_settings_theme_and_managed_files() {
 	let tmp = tempfile::tempdir().unwrap();
 	let base = tmp.path().join("JetBrains");
@@ -647,6 +680,16 @@ fn create_captures_settings_theme_and_managed_files() {
         "<application>\n  <component name=\"LafManager\">\n    <laf themeId=\"ExperimentalDark\" />\n  </component>\n</application>",
     );
 	write(rr.join("options/customization.xml"), "<application />");
+	// Named tool-window layouts: portable, should be captured.
+	write(
+		rr.join("options/window.layouts.xml"),
+		"<application>\n  <component name=\"ToolWindowLayout\"><![CDATA[{\"layouts\":{\"Custom\":{}}}]]></component>\n</application>",
+	);
+	// Per-monitor window geometry: machine-specific, must NOT be captured.
+	write(
+		rr.join("options/window.state.xml"),
+		"<application>\n  <component name=\"DimensionService\" />\n</application>",
+	);
 	write(
 		rr.join("templates/React.xml"),
 		"<templateSet group=\"React\">\n  <template name=\"rcc\" value=\"x\" />\n</templateSet>",
@@ -664,10 +707,22 @@ fn create_captures_settings_theme_and_managed_files() {
 	assert!(cfg.contains(r#""editor.codeVision": false"#), "settings: {cfg}");
 	assert!(cfg.contains(r#""theme": "ExperimentalDark""#), "theme: {cfg}");
 	assert!(cfg.contains(r#""options/customization.xml""#), "files: {cfg}");
+	assert!(cfg.contains(r#""options/window.layouts.xml""#), "files: {cfg}");
 	assert!(cfg.contains(r#""templates""#));
-	// managed files copied out
-	assert!(out.join("options/customization.xml").exists());
+	// directories (live templates, …) are shared: copied at the IDE-relative path
 	assert!(out.join("templates/React.xml").exists());
+	// options/*.xml are IDE-specific: under targets/<product>/, NOT the shared path
+	assert!(out.join("targets/RustRover/options/customization.xml").exists());
+	assert!(out.join("targets/RustRover/options/window.layouts.xml").exists());
+	assert!(!out.join("options/customization.xml").exists());
+	assert!(!out.join("options/window.layouts.xml").exists());
+	// per-monitor geometry is deliberately excluded (neither shared nor per-target)
+	assert!(
+		!cfg.contains("window.state.xml"),
+		"window.state.xml must not be synced: {cfg}"
+	);
+	assert!(!out.join("options/window.state.xml").exists());
+	assert!(!out.join("targets/RustRover/options/window.state.xml").exists());
 }
 
 #[test]

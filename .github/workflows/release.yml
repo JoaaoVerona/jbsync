@@ -19,6 +19,6 @@ jobs:
       bin: jbsync
       extra-assets: schema/jbsync.schema.json
       publish-npm: false
-      npm-package: "@skiley/jbsync"
+      npm-package: "@joaaoverona/jbsync"
       npm-description: "Declaratively apply JetBrains IDE settings from one JSON config, cross-platform"
       tag: ${{ inputs.tag || github.ref_name }}

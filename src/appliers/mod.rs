@@ -26,6 +26,9 @@ pub struct Ctx {
 	pub config_dir: PathBuf,
 	/// Effective plugins for this target (global ∪ per-target override).
 	pub plugins: Option<PluginsCfg>,
+	/// IDE-specific verbatim files for this target (IDE-relative destination
+	/// paths); sourced from `config_dir/targets/<product>/<path>`.
+	pub files: Vec<String>,
 }
 
 /// The computed work for one target: declarative file changes plus any

@@ -4,8 +4,11 @@
 //! Different IDEs flesh out the *same* named scheme with language-specific
 //! pieces: WebStorm's "ABC" carries `JS.*` attributes, RustRover's carries
 //! `org.rust.*`. Taking the union of those pieces (keyed by name) yields a
-//! single scheme that highlights every language. Conflicts resolve to the first
-//! source (the caller orders sources by a chosen primary IDE).
+//! single scheme that highlights every language. The caller orders sources by a
+//! chosen primary IDE, which wins conflicts on real colors. Bare `baseAttributes`
+//! inheritance pointers are IDE-specific defaults rather than portable colors, so
+//! a real color always beats a pointer and conflicting pointers are dropped
+//! (each IDE then keeps its own default) — see [`resolve_attribute`].
 
 use anyhow::{anyhow, Result};
 use quick_xml::events::{BytesStart, Event};
@@ -13,15 +16,68 @@ use quick_xml::reader::Reader;
 use quick_xml::writer::Writer;
 use std::collections::BTreeMap;
 
-/// Merge color schemes. All sources must share the same scheme `name`.
+/// Merge color schemes. All sources must share the same scheme `name`. The first
+/// source is the primary and wins conflicts.
 pub fn merge_color_schemes(sources: &[&str]) -> Result<String> {
-	let mut iter = sources.iter();
-	let first = iter.next().ok_or_else(|| anyhow!("no color schemes to merge"))?;
-	let mut base = ColorScheme::parse(first)?;
-	for src in iter {
-		base.merge(&ColorScheme::parse(src)?);
+	let parsed = sources
+		.iter()
+		.map(|s| ColorScheme::parse(s))
+		.collect::<Result<Vec<_>>>()?;
+	let first = parsed.first().ok_or_else(|| anyhow!("no color schemes to merge"))?;
+
+	// Colors are always concrete `value=` entries: union by name, primary wins.
+	let mut colors: BTreeMap<String, String> = BTreeMap::new();
+	for s in &parsed {
+		for (k, v) in &s.colors {
+			colors.entry(k.clone()).or_insert_with(|| v.clone());
+		}
 	}
-	Ok(base.to_xml())
+
+	// Attributes can be either a real color (a `<value>` block) or a bare
+	// `baseAttributes` inheritance pointer. Gather every source's definition for
+	// each name (primary first), then resolve concrete-vs-pointer per name.
+	let mut groups: BTreeMap<String, Vec<&AttrEntry>> = BTreeMap::new();
+	for s in &parsed {
+		for (k, e) in &s.attributes {
+			groups.entry(k.clone()).or_default().push(e);
+		}
+	}
+	let mut attributes: BTreeMap<String, String> = BTreeMap::new();
+	for (k, entries) in &groups {
+		if let Some(block) = resolve_attribute(entries) {
+			attributes.insert(k.clone(), block);
+		}
+	}
+
+	Ok(render_color_scheme(&first.root_tag, &first.extra, &colors, &attributes))
+}
+
+/// Resolve one attribute across all sources that define it (primary first).
+///
+/// - If any source styles it concretely (has a `<value>`), take the first such
+///   one — a real color always beats a bare inheritance pointer, and among
+///   concrete definitions the primary (first source) wins.
+/// - Otherwise every source is a bare `baseAttributes` pointer: IDE-specific
+///   default inheritance, *not* a portable color. Keep it only if all sources
+///   agree. If they disagree, omit it so that on apply each IDE falls back to
+///   its own bundled default — imposing one IDE's pointer (e.g. IntelliJ's
+///   `DEFAULT_INSTANCE_FIELD`) on another (WebStorm's empty base) is exactly
+///   what was painting the wrong colors.
+fn resolve_attribute(entries: &[&AttrEntry]) -> Option<String> {
+	if let Some(concrete) = entries.iter().find(|e| e.concrete) {
+		return Some(concrete.block.clone());
+	}
+	let first = entries.first()?;
+	let all_agree = entries
+		.iter()
+		.all(|e| normalize_ws(&e.block) == normalize_ws(&first.block));
+	all_agree.then(|| first.block.clone())
+}
+
+/// Collapse runs of whitespace so two serializations of the same bare pointer
+/// compare equal regardless of the source file's formatting.
+fn normalize_ws(s: &str) -> String {
+	s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Merge code styles (flat top-level children of `<code_scheme>`).
@@ -63,7 +119,15 @@ struct ColorScheme {
 	root_tag: String,
 	extra: Vec<String>, // non-colors/attributes sections, e.g. <metaInfo>, from primary
 	colors: BTreeMap<String, String>,
-	attributes: BTreeMap<String, String>,
+	attributes: BTreeMap<String, AttrEntry>,
+}
+
+/// One `<attributes>` entry, keyed by option name. `concrete` is true when the
+/// option carries a real color (`<value>…</value>`); false for a bare
+/// `baseAttributes` inheritance pointer (IDE-specific default, not a color).
+struct AttrEntry {
+	block: String,
+	concrete: bool,
 }
 
 impl ColorScheme {
@@ -85,7 +149,7 @@ impl ColorScheme {
 				let (s, e) = element_range(&events, i);
 				match tag.as_str() {
 					"colors" => collect_options(&events, s, e, &mut colors),
-					"attributes" => collect_options(&events, s, e, &mut attributes),
+					"attributes" => collect_attr_options(&events, s, e, &mut attributes),
 					_ => extra.push(serialize(&events[s..=e])),
 				}
 				i = e + 1;
@@ -100,49 +164,48 @@ impl ColorScheme {
 			attributes,
 		})
 	}
-
-	fn merge(&mut self, other: &ColorScheme) {
-		for (k, v) in &other.colors {
-			self.colors.entry(k.clone()).or_insert_with(|| v.clone());
-		}
-		for (k, v) in &other.attributes {
-			self.attributes.entry(k.clone()).or_insert_with(|| v.clone());
-		}
-	}
-
-	fn to_xml(&self) -> String {
-		let mut out = String::new();
-		out.push_str(&self.root_tag);
-		out.push('\n');
-		for ex in &self.extra {
-			out.push_str("  ");
-			out.push_str(ex);
-			out.push('\n');
-		}
-		if !self.colors.is_empty() {
-			out.push_str("  <colors>\n");
-			for block in self.colors.values() {
-				out.push_str("    ");
-				out.push_str(block);
-				out.push('\n');
-			}
-			out.push_str("  </colors>\n");
-		}
-		if !self.attributes.is_empty() {
-			out.push_str("  <attributes>\n");
-			for block in self.attributes.values() {
-				out.push_str("    ");
-				out.push_str(block);
-				out.push('\n');
-			}
-			out.push_str("  </attributes>\n");
-		}
-		out.push_str("</scheme>");
-		out
-	}
 }
 
-/// Capture each direct `<option name=..>` subtree within a section, keyed by name.
+/// Render a merged color scheme from a primary's root tag + extra sections and
+/// the resolved colors / attributes blocks.
+fn render_color_scheme(
+	root_tag: &str,
+	extra: &[String],
+	colors: &BTreeMap<String, String>,
+	attributes: &BTreeMap<String, String>,
+) -> String {
+	let mut out = String::new();
+	out.push_str(root_tag);
+	out.push('\n');
+	for ex in extra {
+		out.push_str("  ");
+		out.push_str(ex);
+		out.push('\n');
+	}
+	if !colors.is_empty() {
+		out.push_str("  <colors>\n");
+		for block in colors.values() {
+			out.push_str("    ");
+			out.push_str(block);
+			out.push('\n');
+		}
+		out.push_str("  </colors>\n");
+	}
+	if !attributes.is_empty() {
+		out.push_str("  <attributes>\n");
+		for block in attributes.values() {
+			out.push_str("    ");
+			out.push_str(block);
+			out.push('\n');
+		}
+		out.push_str("  </attributes>\n");
+	}
+	out.push_str("</scheme>");
+	out
+}
+
+/// Capture each direct `<option name=..>` subtree within a `<colors>` section,
+/// keyed by name.
 fn collect_options(events: &[Event<'static>], s: usize, e: usize, out: &mut BTreeMap<String, String>) {
 	let mut k = s + 1;
 	while k < e {
@@ -151,6 +214,31 @@ fn collect_options(events: &[Event<'static>], s: usize, e: usize, out: &mut BTre
 				let key = attr(b, "name").unwrap_or_default();
 				let (os, oe) = element_range(events, k);
 				out.entry(key).or_insert_with(|| serialize(&events[os..=oe]));
+				k = oe + 1;
+				continue;
+			}
+		}
+		k += 1;
+	}
+}
+
+/// Like `collect_options`, but for an `<attributes>` section: also records
+/// whether each option is a concrete color (`<value>` present) or a bare
+/// inheritance pointer, so the merge can prefer real colors over pointers.
+fn collect_attr_options(events: &[Event<'static>], s: usize, e: usize, out: &mut BTreeMap<String, AttrEntry>) {
+	let mut k = s + 1;
+	while k < e {
+		if let Event::Start(b) | Event::Empty(b) = &events[k] {
+			if name(b) == "option" {
+				let key = attr(b, "name").unwrap_or_default();
+				let (os, oe) = element_range(events, k);
+				let concrete = events[os..=oe]
+					.iter()
+					.any(|ev| matches!(ev, Event::Start(x) | Event::Empty(x) if name(x) == "value"));
+				out.entry(key).or_insert_with(|| AttrEntry {
+					block: serialize(&events[os..=oe]),
+					concrete,
+				});
 				k = oe + 1;
 				continue;
 			}
@@ -409,6 +497,71 @@ mod tests {
 		// TEXT foreground from WebStorm
 		assert!(merged.contains(r#"value="c8d3f5""#));
 		assert!(!merged.contains(r#"value="ffffff""#));
+	}
+
+	#[test]
+	fn conflicting_bare_pointers_are_omitted() {
+		// The same scheme imported into a Java IDE and a JS IDE. The bare
+		// `baseAttributes` pointer for INSTANCE_FIELD_ATTRIBUTES is an IDE-specific
+		// default (Java inherits DEFAULT_INSTANCE_FIELD; the JS IDE clears it).
+		// Carrying the primary's pointer over would repaint the JS IDE's fields, so
+		// a conflicting pointer must be dropped — each IDE then falls back to its
+		// own bundled default on apply. (This is the WebStorm-colors bug.)
+		let java_ide = r#"<scheme name="X" version="142" parent_scheme="Default">
+  <attributes>
+    <option name="INSTANCE_FIELD_ATTRIBUTES" baseAttributes="DEFAULT_INSTANCE_FIELD" />
+    <option name="SHARED_POINTER" baseAttributes="DEFAULT_KEYWORD" />
+    <option name="TEXT">
+      <value>
+        <option name="FOREGROUND" value="c8d3f5" />
+      </value>
+    </option>
+  </attributes>
+</scheme>"#;
+		let js_ide = r#"<scheme name="X" version="142" parent_scheme="Default">
+  <attributes>
+    <option name="INSTANCE_FIELD_ATTRIBUTES" baseAttributes="" />
+    <option name="SHARED_POINTER" baseAttributes="DEFAULT_KEYWORD" />
+    <option name="JS.LOCAL_VARIABLE">
+      <value>
+        <option name="FOREGROUND" value="aabbcc" />
+      </value>
+    </option>
+  </attributes>
+</scheme>"#;
+		let merged = merge_color_schemes(&[java_ide, js_ide]).unwrap();
+		// conflicting bare pointer -> dropped
+		assert!(!merged.contains("INSTANCE_FIELD_ATTRIBUTES"), "{merged}");
+		// identical bare pointer across both -> kept
+		assert!(merged.contains(r#"<option name="SHARED_POINTER" baseAttributes="DEFAULT_KEYWORD" />"#));
+		// real colors from both IDEs survive
+		assert!(merged.contains(r#"<option name="TEXT">"#));
+		assert!(merged.contains(r#"<option name="JS.LOCAL_VARIABLE">"#));
+	}
+
+	#[test]
+	fn concrete_color_beats_bare_pointer_regardless_of_order() {
+		// Primary defines the attribute as a bare pointer; a later source has the
+		// real color. The real color must win even though the primary is first —
+		// a `<value>` is never lost to an inheritance pointer.
+		let primary = r#"<scheme name="X" version="142" parent_scheme="Default">
+  <attributes>
+    <option name="FIELD" baseAttributes="DEFAULT_FIELD" />
+  </attributes>
+</scheme>"#;
+		let secondary = r#"<scheme name="X" version="142" parent_scheme="Default">
+  <attributes>
+    <option name="FIELD">
+      <value>
+        <option name="FOREGROUND" value="ff0000" />
+      </value>
+    </option>
+  </attributes>
+</scheme>"#;
+		let merged = merge_color_schemes(&[primary, secondary]).unwrap();
+		assert!(merged.contains(r#"<option name="FIELD">"#));
+		assert!(merged.contains(r#"value="ff0000""#));
+		assert!(!merged.contains("baseAttributes"));
 	}
 
 	#[test]

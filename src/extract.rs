@@ -63,6 +63,15 @@ pub fn create(opts: &CreateOptions) -> Result<()> {
 	let mut cfg = build_config(&ides, primary, &color_files, &style_files, opts.portable_keymap)?;
 	cfg.files = managed.clone();
 
+	// IDE-specific managed files (e.g. window layouts): snapshot each IDE's own
+	// copy under targets/<product>/ and record it on that target. `cfg.targets`
+	// is built from `ides` in the same order, so they zip 1:1.
+	let mut per_target_total = 0usize;
+	for (target, ide) in cfg.targets.iter_mut().zip(&ides) {
+		target.files = collect_target_files(ide, &opts.out_dir)?;
+		per_target_total += target.files.len();
+	}
+
 	// Write the config + a copy of the schema for editor autocomplete.
 	let json = serde_json::to_string_pretty(&cfg)? + "\n";
 	let cfg_path = opts.out_dir.join("jbsync.json");
@@ -71,18 +80,53 @@ pub fn create(opts: &CreateOptions) -> Result<()> {
 
 	println!("wrote {}", cfg_path.display());
 	println!(
-		"wrote {} color scheme(s), {} code style(s), {} managed file(s) into {}",
+		"wrote {} color scheme(s), {} code style(s), {} shared + {} per-IDE managed file(s) into {}",
 		color_files.len(),
 		style_files.len(),
 		managed.len(),
+		per_target_total,
 		opts.out_dir.display()
 	);
 	Ok(())
 }
 
-/// Self-contained config files/dirs we snapshot verbatim from the primary IDE
-/// (these are NOT option-patched elsewhere).
-const MANAGED_FILES: &[&str] = &[
+/// Copy each present per-target file from this IDE into
+/// `<out>/targets/<product>/<path>`, returning the IDE-relative paths copied
+/// (for `Target.files`).
+fn collect_target_files(ide: &Ide, out_dir: &Path) -> Result<Vec<String>> {
+	let dest_root = out_dir.join("targets").join(&ide.product);
+	let mut copied = vec![];
+	for rel in PER_TARGET_FILES {
+		let src = ide.config_dir.join(rel);
+		if src.is_file() {
+			let dest = dest_root.join(rel);
+			if let Some(parent) = dest.parent() {
+				std::fs::create_dir_all(parent)?;
+			}
+			std::fs::copy(&src, &dest).with_context(|| format!("copying {}", src.display()))?;
+			copied.push(rel.to_string());
+		}
+	}
+	Ok(copied)
+}
+
+/// Self-contained config dirs we snapshot verbatim from the primary IDE and
+/// SHARE across all IDEs. These hold user content that's the same everywhere
+/// (live templates, file templates, inspection profiles). IDE-specific
+/// `options/*.xml` go in `PER_TARGET_FILES` instead. None are option-patched.
+const MANAGED_FILES: &[&str] = &["templates", "fileTemplates", "inspectionProfiles"];
+
+/// Self-contained files snapshotted PER IDE (not shared from the primary), kept
+/// under `targets/<product>/<path>` and applied to that IDE only.
+///
+/// These `options/*.xml` are IDE-specific — menus/toolbars (`customization.xml`),
+/// file types, debugger, diff, notifications, parameter hints, VCS, advanced
+/// settings, and window layouts all differ between IDEs (each has its own
+/// actions, tool windows, and languages), so the primary's copy must not be
+/// imposed on the others. NB: `window.state.xml` is deliberately excluded
+/// everywhere — it holds per-monitor pixel geometry (DimensionService keys like
+/// `…1920.0.1920.1080@120dpi`) that must not follow you across machines.
+const PER_TARGET_FILES: &[&str] = &[
 	"options/advancedSettings.xml",
 	"options/customization.xml",
 	"options/debugger.xml",
@@ -92,9 +136,7 @@ const MANAGED_FILES: &[&str] = &[
 	"options/notifications.xml",
 	"options/parameter.hints.xml",
 	"options/vcs.xml",
-	"templates",
-	"fileTemplates",
-	"inspectionProfiles",
+	"options/window.layouts.xml",
 ];
 
 /// Copy each present managed file/dir from the primary into the output dir,
@@ -399,6 +441,8 @@ fn extract_target_plugins(ide: &Ide) -> Target {
 		product: ide.product.clone(),
 		version: Some(ide.version.clone()),
 		plugins,
+		// Filled in by `collect_target_files` once the output dir is known.
+		files: vec![],
 	}
 }
 

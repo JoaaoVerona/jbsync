@@ -128,16 +128,14 @@ fn target_os(over: &Option<String>) -> Result<Os> {
 fn resolve_targets(cfg: &Config, product: &Option<String>, version: &Option<String>) -> Result<Vec<Target>> {
 	if let Some(p) = product {
 		// CLI override of product/version uses the matching config target's
-		// plugin overrides if one exists, so `--product X` still respects them.
-		let plugins = cfg
-			.targets
-			.iter()
-			.find(|t| &t.product == p)
-			.and_then(|t| t.plugins.clone());
+		// plugin + per-target file overrides if one exists, so `--product X`
+		// still respects them.
+		let matching = cfg.targets.iter().find(|t| &t.product == p);
 		return Ok(vec![Target {
 			product: p.clone(),
 			version: version.clone(),
-			plugins,
+			plugins: matching.and_then(|t| t.plugins.clone()),
+			files: matching.map(|t| t.files.clone()).unwrap_or_default(),
 		}]);
 	}
 	if cfg.targets.is_empty() {
@@ -160,6 +158,7 @@ fn build_ctx(cfg: &Config, cfg_path: &Path, target: &Target, os: Os) -> Result<(
 			target_os: os,
 			config_dir: config_dir_of(cfg_path),
 			plugins: PluginsCfg::effective(cfg.plugins.as_ref(), target.plugins.as_ref()),
+			files: target.files.clone(),
 		},
 		exists,
 	))

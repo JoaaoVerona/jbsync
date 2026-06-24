@@ -14,6 +14,7 @@ run test            # unit + integration tests
 run lint            # FORMAT (cargo fmt) + clippy -D warnings  (modifies files)
 run check           # VERIFY (no changes): cargo check + fmt --check + clippy
 run cli <args>      # run the binary, e.g. run cli list
+run install         # build release + copy binary to ~/.local/bin (local dev install)
 run release patch   # bump version (major|minor|patch), tag, push -> CI builds release
 ```
 
@@ -26,7 +27,9 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
   `Skiley/runfile` setup action to install the `run` CLI.
 - `.github/workflows/release.yml` — on a `v*.*.*` tag, calls the reusable
   `Skiley/rust-binary-publish` workflow to build cross-platform binaries + GitHub
-  release (npm publish disabled). The `release` Runfile target creates the tag.
+  release (npm publish disabled). It also renders and attaches `install.sh` /
+  `install.ps1` (env prefix `JBSYNC`, installs to `~/.local/bin`) — the
+  `curl … | sh` install in the README. The `release` Runfile target creates the tag.
 
 ## Layout
 
@@ -48,12 +51,24 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
   Read-only w.r.t. IDEs; only writes the output dir. `Config` derives `Serialize` for this.
 - `src/scheme_merge.rs` — merge same-named color schemes (union `<colors>`/`<attributes>` by
   option name) and code styles (union top-level children by tag + name/language). First source
-  wins conflicts; handles self-closing/empty roots.
+  (primary) wins conflicts; handles self-closing/empty roots. **Attribute gotcha:** an
+  `<attributes>` option is either a real color (`<value>`) or a bare `baseAttributes`
+  inheritance pointer (an IDE-specific default, not a portable color). `resolve_attribute`
+  prefers concrete colors over pointers, and *drops* a pointer when sources disagree so each
+  IDE falls back to its own default — otherwise the primary's pointer repaints that token in
+  other IDEs (was the "wrong colors in WebStorm" bug).
 - `src/settings.rs` — registry of flat `<option>` settings (key → file/component/option/kind).
   Drives both apply (`appliers/named_settings.rs`) and capture (`extract::extract_settings`).
   **Adding a setting = one row here + one line in the schema's `settings` block.**
-- `src/appliers/files.rs` — verbatim copy of `config.files` (whole self-contained settings
-  files/dirs: menus, templates, inspections, grazie, …). `create` collects a curated set.
+- `src/appliers/files.rs` — verbatim copy of `config.files` (shared, into every IDE) PLUS
+  per-target `Target.files` (IDE-specific) sourced from `targets/<product>/<path>` and applied
+  to that IDE only. On `create`: shared `MANAGED_FILES` = the user-content dirs only
+  (`templates`, `fileTemplates`, `inspectionProfiles`) from the primary; per-target
+  `PER_TARGET_FILES` = every `options/*.xml` (menus/`customization.xml`, file types, debugger,
+  diff, notifications, parameter hints, VCS, advanced settings, `window.layouts.xml`) snapshotted
+  from each IDE separately — they differ per IDE (actions, tool windows, languages) so the
+  primary's copy must not be imposed on the others. `window.state.xml` (per-monitor geometry) is
+  excluded entirely.
 - `src/cli.rs` — `apply` / `check` / `create` / `list` / `keymap`; diff, backup, atomic write, run installs.
 - `schema/jbsync.schema.json` — user-facing JSON Schema (keep in sync with `src/config.rs`).
 - `tests/fixtures/` — real (sanitized) JetBrains files used by integration tests.

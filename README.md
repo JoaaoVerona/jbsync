@@ -37,15 +37,39 @@ of truth** and the IDEs **read-only consumers**:
   notifications, parameter hints, file types, VCS/debugger/diff, advanced
   settings) — the catch-all for anything not worth a typed key.
 
-## Install / build
+## Install
+
+### Released binary (Linux / macOS / Windows)
 
 ```bash
-cargo build --release
-# binary at target/release/jbsync
+# Linux / macOS
+curl -fsSL https://github.com/JoaaoVerona/jbsync/releases/latest/download/install.sh | sh
+
+# Windows (PowerShell)
+iwr https://github.com/JoaaoVerona/jbsync/releases/latest/download/install.ps1 | iex
 ```
 
-This repo also ships a [Runfile](Runfile.json) — `run build`, `run test`,
-`run lint` — if you have the [`run`](https://github.com/Skiley/runfile)
+Installs the `jbsync` binary to `~/.local/bin` (override with
+`JBSYNC_INSTALL_DIR`); add that directory to your `PATH` if it isn't already.
+Pin a version by passing a tag, e.g.
+`curl -fsSL …/install.sh | sh -s v0.1.0`.
+
+### With Cargo
+
+```bash
+cargo install --git https://github.com/JoaaoVerona/jbsync   # latest from main
+cargo install --path .                                  # from a local checkout
+```
+
+### From source
+
+```bash
+cargo build --release   # binary at target/release/jbsync
+```
+
+This repo ships a [Runfile](Runfile.json) — `run build`, `run test`,
+`run lint`, and `run install` (build a release binary and copy it to
+`~/.local/bin`) — if you have the [`run`](https://github.com/Skiley/runfile)
 task runner installed.
 
 ## Usage
@@ -76,8 +100,10 @@ IDEs and writes a portable, self-contained config you can commit:
 - `DIR/jbsync.schema.json` — a copy of the schema (for editor autocomplete).
 - `DIR/color-schemes/*.icls` and `DIR/code-styles/*.xml` — the scheme files
   themselves, **merged across IDEs**.
-- `DIR/options/…`, `DIR/templates/…`, … — managed files, kept at their
-  IDE-relative paths (so `apply` mirrors them back to the right place).
+- `DIR/templates/…`, `DIR/fileTemplates/…`, `DIR/inspectionProfiles/…` — shared
+  managed dirs from the primary (same user content for every IDE).
+- `DIR/targets/<product>/options/…` — IDE-specific `options/*.xml` (menus, file
+  types, window layouts, …), one copy per IDE, applied to that IDE only.
 
 Everything but `jbsync.json` / `jbsync.schema.json` is organised into
 subdirectories. `create` is strictly read-only with respect to your IDEs — it
@@ -88,7 +114,20 @@ different language pieces — WebStorm's "ABC" carries `JS.*`/`CSS.*` attributes
 RustRover's carries `org.rust.*`, Android Studio's carries Kotlin/Compose. `create`
 groups same-named schemes across all IDEs and unions their `<colors>` and
 `<attributes>` (and, for code styles, their per-language sections), producing one
-file that highlights every language. Conflicts resolve to the **primary** IDE.
+file that highlights every language. Conflicts on real colors resolve to the
+**primary** IDE.
+
+A merged `<attributes>` entry is either a real color (an `<option>` with a
+`<value>`) or a bare `baseAttributes` _inheritance pointer_ (e.g.
+`<option name="INSTANCE_FIELD_ATTRIBUTES" baseAttributes="DEFAULT_INSTANCE_FIELD" />`).
+A real color always wins over a pointer, and among real colors the primary wins.
+Bare pointers, though, are IDE-_specific defaults_, not portable colors: the same
+attribute is `baseAttributes="DEFAULT_INSTANCE_FIELD"` in a Java IDE but
+`baseAttributes=""` in WebStorm. When sources disagree on a pointer, `create`
+**omits** it so each IDE falls back to its own bundled default on `apply` —
+otherwise the primary's pointer would repaint that token in the other IDEs (this
+was the cause of "wrong colors in WebStorm"). Identical pointers are kept.
+
 Empty `_@user_*` override schemes — `partialSave` artifacts the IDE writes when
 you merely select/tweak a read-only bundled scheme, with no actual
 colors/attributes — are skipped as noise (non-empty overrides are kept).
@@ -142,6 +181,10 @@ block.) `create` uses this to emit each IDE's real plugin set per-target.
 ]
 ```
 
+A `targets[]` entry also takes its own **`files`** list for IDE-specific verbatim
+files (window layouts, etc.) — sourced from `targets/<product>/<path>` and applied
+to that IDE only, never shared. See [Flat settings & managed files](#flat-settings--managed-files).
+
 Caveats specific to installs (they're the one networked, imperative step):
 
 - Needs the **IDE launcher** — found via PATH, the Toolbox `scripts/` dir, or
@@ -168,11 +211,18 @@ Beyond the typed sections, two general mechanisms cover the long tail:
   "markdown.previewFontSize": 16
 },
 
-"files": [                                        // copied verbatim into the IDE
-  "options/customization.xml",                    // menus & toolbars
-  "options/grazie_global.xml",                    // spelling/grammar
-  "options/filetypes.xml", "options/vcs.xml",
+"files": [                                        // SHARED: copied into every IDE
   "templates", "fileTemplates", "inspectionProfiles"
+],
+"targets": [                                       // IDE-specific options/*.xml + layouts
+  { "product": "WebStorm", "files": [
+      "options/customization.xml",                // menus & toolbars (per IDE)
+      "options/filetypes.xml", "options/vcs.xml",
+      "options/window.layouts.xml"
+  ] },
+  { "product": "RustRover", "files": [
+      "options/customization.xml", "options/window.layouts.xml"
+  ] }
 ]
 ```
 
@@ -180,14 +230,29 @@ Beyond the typed sections, two general mechanisms cover the long tail:
   [`settings.rs`](src/settings.rs) / the schema's `settings` block); an unknown
   key is an error. Both `apply` and `create` are driven by that one table.
 - **`files`** entries are config-relative paths (a directory is copied
-  recursively) installed verbatim. Don't list files that other sections
-  option-patch (e.g. `editor.xml`, `ui.lnf.xml`). `create` auto-collects a
-  curated managed set from the primary IDE.
+  recursively) installed verbatim into **every** IDE. Don't list files that other
+  sections option-patch (e.g. `editor.xml`, `ui.lnf.xml`). On `create`, only
+  cross-IDE user content goes here — the `templates/`, `fileTemplates/`, and
+  `inspectionProfiles/` dirs from the primary. The IDE-specific `options/*.xml`
+  (menus/toolbars, file types, debugger, diff, notifications, parameter hints,
+  VCS, advanced settings, window layouts) go on each `targets[]` entry's own
+  `files` instead — stored under `targets/<product>/<path>` next to the config and
+  applied to that IDE only, so one IDE's menus/file-types never overwrite
+  another's.
     - **Live templates** get special handling on `create`: the `templates/` dir is
       often dominated by records of _disabled bundled_ templates (every entry
       `deactivated="true"`), not custom content, so `create` only copies template
       groups that contain at least one active template. Add `"templates"` to
       `files` manually if you want the full dir copied regardless.
+    - **`options/*.xml` are IDE-specific.** Menus/toolbars (`customization.xml`),
+      file types, debugger, diff, notifications, parameter hints, VCS, advanced
+      settings, and window layouts (`window.layouts.xml`) all differ between IDEs —
+      each has its own actions, tool windows, and languages. `create` snapshots
+      each IDE's copy separately under `targets/<product>/` and records it on that
+      IDE's `targets[].files` (not the shared `files`), so on `apply` each IDE gets
+      its own back and none overwrites another's. It intentionally skips
+      `options/window.state.xml`, which holds per-monitor pixel geometry
+      (resolution/DPI-keyed) that should not follow you between machines.
 
 ### Environment overrides
 

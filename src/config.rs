@@ -53,6 +53,12 @@ pub struct Target {
 	/// Per-target plugin overrides, merged (unioned) with the top-level `plugins`.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub plugins: Option<PluginsCfg>,
+	/// IDE-specific verbatim-copied files (e.g. window layouts), applied to THIS
+	/// IDE only. Each entry is the IDE-relative destination path; the source lives
+	/// at `targets/<product>/<path>` next to the config. Unlike the top-level
+	/// `files`, these are not shared across IDEs.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub files: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -275,5 +281,19 @@ mod tests {
 		// re-serialize keeps it
 		let out = serde_json::to_string(&cfg).unwrap();
 		assert!(out.contains(r#""plugins":{"install":["x"]}"#));
+	}
+
+	#[test]
+	fn target_files_round_trip_through_json() {
+		let json = r#"{ "targets": [ { "product": "RustRover", "files": ["options/window.layouts.xml"] } ] }"#;
+		let cfg: Config = serde_json::from_str(json).unwrap();
+		assert_eq!(cfg.targets[0].files, vec!["options/window.layouts.xml"]);
+		let out = serde_json::to_string(&cfg).unwrap();
+		assert!(out.contains(r#""files":["options/window.layouts.xml"]"#));
+		// empty per-target files are omitted from output
+		let bare = r#"{ "targets": [ { "product": "RustRover" } ] }"#;
+		let cfg2: Config = serde_json::from_str(bare).unwrap();
+		assert!(cfg2.targets[0].files.is_empty());
+		assert!(!serde_json::to_string(&cfg2).unwrap().contains("files"));
 	}
 }
