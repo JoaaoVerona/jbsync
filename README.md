@@ -84,7 +84,12 @@ jbsync keymap config.json --out . # generate per-OS keymaps to ./keymaps/
 ```
 
 Useful flags on `apply`/`check`: `--product`, `--version`, `--os`
-(`linux|macos|windows`, default: host). `apply` also takes `--no-backup`.
+(`linux|macos|windows`, default: host), and `--exclude <section>` (repeatable)
+to skip a config section entirely — it is neither applied nor reported as drift.
+Sections mirror the config keys: `editor`, `terminal`, `console`, `ui`,
+`editor-behavior`, `settings`, `color-scheme`, `code-style`, `keymap`, `files`,
+`plugins`, `vm-options` (e.g. `--exclude plugins --exclude keymap`). `apply` also
+takes `--no-backup`.
 
 > ⚠ The IDE rewrites its config on exit and reads it on startup — **close the
 > target IDE before `apply`**, or it will clobber the changes.

@@ -13,7 +13,45 @@ use crate::config::{Config, PluginsCfg};
 use crate::plan::{FileChange, PluginInstall};
 use crate::platform::Os;
 use anyhow::Result;
+use clap::ValueEnum;
 use std::path::{Path, PathBuf};
+
+/// A config section that `--exclude` can drop from apply/check. Each variant
+/// maps 1:1 to a top-level config key (kebab-cased), so excluding it skips
+/// exactly the applier(s) that read that key — neither applying it nor counting
+/// it as drift. Plural aliases are accepted for the artifact-y groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Section {
+	/// Editor font (`editor`).
+	Editor,
+	/// Terminal font (`terminal`).
+	Terminal,
+	/// Console font (`console`).
+	Console,
+	/// UI / look-and-feel (`ui`).
+	Ui,
+	/// Editor behavior (`editorBehavior`).
+	EditorBehavior,
+	/// Named flat settings (`settings`).
+	Settings,
+	/// Color scheme (`colorScheme`).
+	#[value(alias = "color-schemes")]
+	ColorScheme,
+	/// Code style (`codeStyle`).
+	#[value(alias = "code-styles")]
+	CodeStyle,
+	/// Keymap (`keymap`).
+	#[value(alias = "keymaps")]
+	Keymap,
+	/// Verbatim-copied files (`files`).
+	Files,
+	/// Plugins: install + disable (`plugins`).
+	#[value(alias = "plugin")]
+	Plugins,
+	/// JVM options (`vmOptions`).
+	#[value(alias = "vmoptions")]
+	VmOptions,
+}
 
 /// Everything an applier needs to compute changes for one IDE target.
 pub struct Ctx {
@@ -49,31 +87,65 @@ impl Plan {
 }
 
 /// Build the full, deduplicated plan of real changes for one target.
-pub fn build_plan(cfg: &Config, ctx: &Ctx) -> Result<Plan> {
+///
+/// Any [`Section`] listed in `exclude` is skipped entirely: the applier(s) that
+/// read that config key are not run, so the section neither applies nor shows up
+/// as drift.
+pub fn build_plan(cfg: &Config, ctx: &Ctx, exclude: &[Section]) -> Result<Plan> {
+	let on = |s: Section| !exclude.contains(&s);
+
 	let mut files: Vec<FileChange> = Vec::new();
 	// Option-patched files compose through one accumulator: several appliers can
 	// touch the same file (e.g. editor.xml ← editor_behavior + named_settings)
 	// without clobbering each other (each reads the running content, not disk).
 	let mut ps = PatchSet::new(&ctx.ide_dir);
-	options::editor_font(cfg, &mut ps)?;
-	options::terminal_font(cfg, &mut ps)?;
-	options::console_font(cfg, &mut ps)?;
-	options::ui(cfg, &mut ps)?;
-	options::editor_behavior(cfg, &mut ps)?;
-	named_settings::settings(cfg, &mut ps)?;
-	files.extend(scheme::color_scheme(cfg, ctx, &mut ps)?);
-	files.extend(scheme::code_style(cfg, ctx, &mut ps)?);
-	files.extend(keymap::keymap(cfg, ctx, &mut ps)?);
+	if on(Section::Editor) {
+		options::editor_font(cfg, &mut ps)?;
+	}
+	if on(Section::Terminal) {
+		options::terminal_font(cfg, &mut ps)?;
+	}
+	if on(Section::Console) {
+		options::console_font(cfg, &mut ps)?;
+	}
+	if on(Section::Ui) {
+		options::ui(cfg, &mut ps)?;
+	}
+	if on(Section::EditorBehavior) {
+		options::editor_behavior(cfg, &mut ps)?;
+	}
+	if on(Section::Settings) {
+		named_settings::settings(cfg, &mut ps)?;
+	}
+	if on(Section::ColorScheme) {
+		files.extend(scheme::color_scheme(cfg, ctx, &mut ps)?);
+	}
+	if on(Section::CodeStyle) {
+		files.extend(scheme::code_style(cfg, ctx, &mut ps)?);
+	}
+	if on(Section::Keymap) {
+		files.extend(keymap::keymap(cfg, ctx, &mut ps)?);
+	}
 
 	// Whole-file owners (each owns its file exclusively).
-	files.extend(self::files::copy(cfg, ctx)?);
-	files.extend(plugins::disabled(ctx)?);
-	files.extend(vmoptions::vmoptions(cfg, ctx)?);
+	if on(Section::Files) {
+		files.extend(self::files::copy(cfg, ctx)?);
+	}
+	if on(Section::Plugins) {
+		files.extend(plugins::disabled(ctx)?);
+	}
+	if on(Section::VmOptions) {
+		files.extend(vmoptions::vmoptions(cfg, ctx)?);
+	}
 
 	files.extend(ps.into_changes());
 	Ok(Plan {
 		files: files.into_iter().filter(FileChange::is_change).collect(),
-		installs: plugins::installs(ctx),
+		installs: if on(Section::Plugins) {
+			plugins::installs(ctx)
+		} else {
+			vec![]
+		},
 	})
 }
 

@@ -1,6 +1,6 @@
 //! Command-line surface: `apply`, `check`, `list`, `keymap`.
 
-use crate::appliers::{self, keymap, Ctx};
+use crate::appliers::{self, keymap, Ctx, Section};
 use crate::config::{Config, PluginsCfg, Target};
 use crate::discovery;
 use crate::plan::{FileChange, PluginInstall};
@@ -55,6 +55,10 @@ struct ApplyArgs {
 	/// Override target OS (default: host). One of linux|macos|windows.
 	#[arg(long)]
 	os: Option<String>,
+	/// Skip a config section (repeatable), e.g. `--exclude plugins --exclude
+	/// keymap`. Excluded sections are left untouched.
+	#[arg(long, value_enum)]
+	exclude: Vec<Section>,
 }
 
 #[derive(Args)]
@@ -66,6 +70,10 @@ struct CheckArgs {
 	version: Option<String>,
 	#[arg(long)]
 	os: Option<String>,
+	/// Skip a config section (repeatable), e.g. `--exclude plugins --exclude
+	/// keymap`. Excluded sections are not reported as drift.
+	#[arg(long, value_enum)]
+	exclude: Vec<Section>,
 }
 
 #[derive(Args)]
@@ -181,7 +189,7 @@ fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 		if !exists {
 			println!("  (config dir does not exist yet — it will be created)");
 		}
-		let plan = appliers::build_plan(&cfg, &ctx)?;
+		let plan = appliers::build_plan(&cfg, &ctx, &a.exclude)?;
 		if plan.is_empty() {
 			println!("  already in sync\n");
 			continue;
@@ -223,7 +231,7 @@ fn cmd_check(a: CheckArgs) -> Result<i32> {
 	for target in &targets {
 		let (ctx, _) = build_ctx(&cfg, &a.config, target, os)?;
 		let label = format!("{}{}", target.product, target.version.as_deref().unwrap_or(""));
-		let plan = appliers::build_plan(&cfg, &ctx)?;
+		let plan = appliers::build_plan(&cfg, &ctx, &a.exclude)?;
 		if plan.is_empty() {
 			println!("✓ {label}: in sync");
 		} else {

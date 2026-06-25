@@ -185,6 +185,77 @@ fn apply_merges_disabled_plugins_and_patches_vmoptions() {
 }
 
 #[test]
+fn exclude_skips_named_sections_in_apply_and_check() {
+	let (_tmp, base, cfg) = setup();
+	let ide = base.join("IntelliJIdea2026.1");
+	let before_disabled = read(ide.join("disabled_plugins.txt"));
+
+	// Exclude two sections at once; `keymaps` uses the plural alias.
+	let out = run(
+		&base,
+		&[
+			"apply",
+			cfg.to_str().unwrap(),
+			"--product",
+			"IntelliJIdea",
+			"--version",
+			"2026.1",
+			"--os",
+			"linux",
+			"--exclude",
+			"plugins",
+			"--exclude",
+			"keymaps",
+		],
+	);
+	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+	// Excluded sections are untouched: disabled_plugins.txt unchanged, no keymap written...
+	assert_eq!(read(ide.join("disabled_plugins.txt")), before_disabled);
+	assert!(!ide.join("keymaps/Verona _Linux_.xml").exists());
+	// ...while non-excluded settings still apply.
+	let font = read(ide.join("options/editor-font.xml"));
+	assert!(font.contains(r#"<option name="FONT_FAMILY" value="JetBrains Mono" />"#));
+
+	// `check` with the same exclusions reports the fresh apply as in sync.
+	let chk = run(
+		&base,
+		&[
+			"check",
+			cfg.to_str().unwrap(),
+			"--product",
+			"IntelliJIdea",
+			"--version",
+			"2026.1",
+			"--os",
+			"linux",
+			"--exclude",
+			"plugins",
+			"--exclude",
+			"keymap",
+		],
+	);
+	assert_eq!(chk.status.code(), Some(0), "in sync once sections are excluded");
+	assert!(String::from_utf8_lossy(&chk.stdout).contains("in sync"));
+
+	// An unknown section is rejected by clap (exit 2).
+	let bad = run(
+		&base,
+		&[
+			"check",
+			cfg.to_str().unwrap(),
+			"--product",
+			"IntelliJIdea",
+			"--os",
+			"linux",
+			"--exclude",
+			"nonsense",
+		],
+	);
+	assert_eq!(bad.status.code(), Some(2), "unknown section should be a usage error");
+}
+
+#[test]
 fn apply_generates_linux_keymap_with_mod_as_ctrl() {
 	let (_tmp, base, cfg) = setup();
 	assert!(apply_linux(&base, &cfg).status.success());
