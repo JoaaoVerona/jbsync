@@ -11,14 +11,21 @@ on:
 
 jobs:
   release:
-    uses: Skiley/rust-binary-publish/.github/workflows/release.yml@v1.0.0
+    uses: Skiley/rust-binary-publish/.github/workflows/release.yml@v2.0.0
     permissions:
       contents: write
       id-token: write
     with:
-      bin: jbsync
-      extra-assets: schema/jbsync.schema.json
-      publish-npm: false
-      npm-package: "@joaaoverona/jbsync"
-      npm-description: "Declaratively apply JetBrains IDE settings from one JSON config, cross-platform"
       tag: ${{ inputs.tag || github.ref_name }}
+      input: |
+        {
+          "type": "rust-binaries",
+          "binary-name": "jbsync"
+        }
+      outputs: |
+        [
+          {
+            "type": "github-release",
+            "extra-assets": "schema/jbsync.schema.json"
+          }
+        ]
