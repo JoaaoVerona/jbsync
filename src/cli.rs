@@ -59,6 +59,11 @@ struct ApplyArgs {
 	/// keymap`. Excluded sections are left untouched.
 	#[arg(long, value_enum)]
 	exclude: Vec<Section>,
+	/// Only touch IDEs listed in the config's `targets`. By default, shared
+	/// settings (font, keymap, schemes, …) are ALSO applied to any other IDE
+	/// found on this machine — even ones absent from the config.
+	#[arg(long)]
+	targets_only: bool,
 }
 
 #[derive(Args)]
@@ -74,6 +79,9 @@ struct CheckArgs {
 	/// keymap`. Excluded sections are not reported as drift.
 	#[arg(long, value_enum)]
 	exclude: Vec<Section>,
+	/// Only check IDEs listed in the config's `targets` (see `apply --targets-only`).
+	#[arg(long)]
+	targets_only: bool,
 }
 
 #[derive(Args)]
@@ -133,7 +141,12 @@ fn target_os(over: &Option<String>) -> Result<Os> {
 	}
 }
 
-fn resolve_targets(cfg: &Config, product: &Option<String>, version: &Option<String>) -> Result<Vec<Target>> {
+fn resolve_targets(
+	cfg: &Config,
+	product: &Option<String>,
+	version: &Option<String>,
+	targets_only: bool,
+) -> Result<Vec<Target>> {
 	if let Some(p) = product {
 		// CLI override of product/version uses the matching config target's
 		// plugin + per-target file overrides if one exists, so `--product X`
@@ -146,10 +159,38 @@ fn resolve_targets(cfg: &Config, product: &Option<String>, version: &Option<Stri
 			files: matching.map(|t| t.files.clone()).unwrap_or_default(),
 		}]);
 	}
-	if cfg.targets.is_empty() {
+	let mut targets = cfg.targets.clone();
+	if !targets_only {
+		let discovered = discovery::discover_all().unwrap_or_default();
+		targets = extend_with_discovered(targets, &discovered);
+	}
+	if targets.is_empty() {
 		bail!("no targets: add a `targets` array to the config or pass --product");
 	}
-	Ok(cfg.targets.clone())
+	Ok(targets)
+}
+
+/// Append a SHARED-only target for every discovered IDE not already configured
+/// (e.g. Rider captured on another machine): no per-target plugins/files, so it
+/// receives only the global settings (font/keymap/schemes). Latest installed
+/// version (`None`). Configured targets are kept as-is and win on product name.
+fn extend_with_discovered(mut targets: Vec<Target>, discovered: &[(String, String, PathBuf)]) -> Vec<Target> {
+	for (product, _ver, _path) in discovered {
+		if !targets.iter().any(|t| &t.product == product) {
+			targets.push(Target {
+				product: product.clone(),
+				version: None,
+				plugins: None,
+				files: vec![],
+			});
+		}
+	}
+	targets
+}
+
+/// Products explicitly listed in the config (vs. discovered shared-only IDEs).
+fn configured_products(cfg: &Config) -> std::collections::HashSet<String> {
+	cfg.targets.iter().map(|t| t.product.clone()).collect()
 }
 
 fn build_ctx(cfg: &Config, cfg_path: &Path, target: &Target, os: Os) -> Result<(Ctx, bool)> {
@@ -175,7 +216,8 @@ fn build_ctx(cfg: &Config, cfg_path: &Path, target: &Target, os: Os) -> Result<(
 fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 	let cfg = Config::load(&a.config)?;
 	let os = target_os(&a.os)?;
-	let targets = resolve_targets(&cfg, &a.product, &a.version)?;
+	let targets = resolve_targets(&cfg, &a.product, &a.version, a.targets_only)?;
+	let configured = configured_products(&cfg);
 
 	if !a.dry_run {
 		println!("⚠  Make sure the target IDE is fully closed — it overwrites config on exit.\n");
@@ -186,6 +228,9 @@ fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 		let (ctx, exists) = build_ctx(&cfg, &a.config, target, os)?;
 		let label = format!("{}{}", target.product, target.version.as_deref().unwrap_or(""));
 		println!("● {label}  [{}]  ({})", ctx.target_os, ctx.ide_dir.display());
+		if !configured.contains(&target.product) {
+			println!("  (not in config — applying shared settings only)");
+		}
 		if !exists {
 			println!("  (config dir does not exist yet — it will be created)");
 		}
@@ -225,12 +270,18 @@ fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 fn cmd_check(a: CheckArgs) -> Result<i32> {
 	let cfg = Config::load(&a.config)?;
 	let os = target_os(&a.os)?;
-	let targets = resolve_targets(&cfg, &a.product, &a.version)?;
+	let targets = resolve_targets(&cfg, &a.product, &a.version, a.targets_only)?;
+	let configured = configured_products(&cfg);
 
 	let mut drift = 0usize;
 	for target in &targets {
 		let (ctx, _) = build_ctx(&cfg, &a.config, target, os)?;
-		let label = format!("{}{}", target.product, target.version.as_deref().unwrap_or(""));
+		let suffix = if configured.contains(&target.product) {
+			""
+		} else {
+			" (shared only)"
+		};
+		let label = format!("{}{}{suffix}", target.product, target.version.as_deref().unwrap_or(""));
 		let plan = appliers::build_plan(&cfg, &ctx, &a.exclude)?;
 		if plan.is_empty() {
 			println!("✓ {label}: in sync");
@@ -381,4 +432,48 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 	std::fs::write(&tmp, content).with_context(|| format!("writing {}", tmp.display()))?;
 	std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn target(product: &str, version: Option<&str>, files: Vec<String>) -> Target {
+		Target {
+			product: product.to_string(),
+			version: version.map(str::to_string),
+			plugins: None,
+			files,
+		}
+	}
+
+	fn disco(product: &str, version: &str) -> (String, String, PathBuf) {
+		(product.to_string(), version.to_string(), PathBuf::from("/x"))
+	}
+
+	#[test]
+	fn discovered_ides_become_shared_only_targets_without_clobbering_configured() {
+		// IntelliJIdea is configured (with per-target files); the rest are only
+		// discovered on this machine.
+		let configured = vec![target("IntelliJIdea", Some("2026.1"), vec!["options/x.xml".into()])];
+		let discovered = [
+			disco("IntelliJIdea", "2026.1"), // already configured → must not duplicate
+			disco("RustRover", "2026.1"),
+			disco("RustRover", "2025.3"), // second version of same product → no dup
+			disco("WebStorm", "2026.1"),
+		];
+
+		let merged = extend_with_discovered(configured, &discovered);
+		let products: Vec<&str> = merged.iter().map(|t| t.product.as_str()).collect();
+		assert_eq!(products, ["IntelliJIdea", "RustRover", "WebStorm"]);
+
+		// Configured target keeps its version + per-target files.
+		let ij = &merged[0];
+		assert_eq!(ij.version.as_deref(), Some("2026.1"));
+		assert_eq!(ij.files, vec!["options/x.xml".to_string()]);
+
+		// Discovered ones are shared-only: latest version (None), no files.
+		let rr = merged.iter().find(|t| t.product == "RustRover").unwrap();
+		assert!(rr.version.is_none() && rr.files.is_empty() && rr.plugins.is_none());
+	}
 }

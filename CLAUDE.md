@@ -89,6 +89,11 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
   primary's copy must not be imposed on the others. `window.state.xml` (per-monitor geometry) is
   excluded entirely.
 - `src/cli.rs` — `apply` / `check` / `create` / `list` / `keymap`; diff, backup, atomic write, run installs.
+    - `apply`/`check` apply to the config's `targets` PLUS every other IDE discovered on the
+      machine (`extend_with_discovered`), so an IDE absent from the config (e.g. Rider captured
+      on another box) still gets the SHARED settings (font/keymap/schemes) — a synthetic target
+      with no per-target plugins/files. `--targets-only` restricts to the configured targets;
+      `--product X` still targets just X (shared-only if X isn't a configured target).
 - `schema/jbsync.schema.json` — user-facing JSON Schema (keep in sync with `src/config.rs`).
 - `tests/fixtures/` — real (sanitized) JetBrains files used by integration tests.
 
