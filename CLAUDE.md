@@ -45,6 +45,20 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
     - `plugins.rs` — disable (file) + ensure-install (detect installed IDs by reading
       `META-INF/plugin.xml` unpacked or inside `lib/*.jar`, then `installPlugins` the missing).
 - `src/launcher.rs` — find the IDE launcher (override → PATH → Toolbox `scripts/`).
+- `src/default_keymap.rs` — read JetBrains' *bundled* default keymaps (`keymaps/<name>.xml`
+  inside a `lib/*.jar` of the IDE install, located via the launcher). Used only by
+  `create --portable-keymap`: a user keymap file stores only *deviations* from its parent,
+  so inherited bindings (Find = Ctrl+F) never appear and the Ctrl→Cmd port can't act on them.
+  `extract::resolve_default_chain` walks the parent chain into a flat binding set and
+  materialises the inherited **primary-modifier** bindings explicitly (only those change
+  meaning across platforms — function keys / Alt-combos stay inherited). User overrides always
+  win. NB: `keystroke_to_spec` matches the modifier *family* (`ctrl`/`control`, `meta`/`cmd`)
+  since the jars use the long AWT spelling; `keymap::resolve_keystroke` preserves key case so
+  named keys (`MINUS`, `F2`, `ENTER`) survive. Jar discovery tries the launcher first, then
+  scans well-known install roots (`locate_keymap_jar`) — Windows Toolbox lives under
+  `%LOCALAPPDATA%`, NOT the roaming dir `find_launcher` derives, so the root scan is what makes
+  a Windows `create` work. If discovery still fails, `create` warns loudly and the user can set
+  `JBSYNC_LAUNCHER`; only explicit overrides are captured in that case.
 - `src/discovery.rs` — config base (`JBSYNC_CONFIG_HOME`) + data/plugins base (`JBSYNC_DATA_HOME`).
 - `src/extract.rs` — `create`: reverse of apply. Reads scalars (via `xmlpatch::get_*`),
   reverses the keymap into bindings, unions installed plugins, and orchestrates scheme merge.

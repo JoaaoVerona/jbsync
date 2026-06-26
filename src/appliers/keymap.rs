@@ -183,7 +183,10 @@ fn resolve_keystroke(spec: &str, os: Os) -> String {
 			"meta" | "cmd" | "command" | "win" | "super" => meta = true,
 			"alt" | "option" | "opt" => alt = true,
 			"shift" => shift = true,
-			other => key = Some(other.to_string()),
+			// Preserve the key's original case: JetBrains/AWT named keys are
+			// upper-case ("MINUS", "F2", "ENTER") and lower-casing them yields an
+			// invalid keystroke. Single letters work either way.
+			_ => key = Some(tok.to_string()),
 		}
 	}
 
@@ -283,6 +286,23 @@ mod tests {
 			bindings: b2,
 		};
 		assert!(generate(&cfg2, Os::Macos).contains(r#"first-keystroke="meta k" second-keystroke="meta s""#));
+	}
+
+	#[test]
+	fn named_keys_keep_their_case() {
+		// Materialised default bindings carry AWT named keys ("MINUS", "F2"); they
+		// must not be lower-cased into invalid keystrokes.
+		let mut bindings = BTreeMap::new();
+		bindings.insert("ZoomOut".to_string(), Binding::One("mod+MINUS".to_string()));
+		bindings.insert("Rename".to_string(), Binding::One("shift+F6".to_string()));
+		let cfg = KeymapCfg {
+			name: "V".into(),
+			parent: "$default".into(),
+			bindings,
+		};
+		let xml = generate(&cfg, Os::Macos);
+		assert!(xml.contains(r#"first-keystroke="meta MINUS""#), "{xml}");
+		assert!(xml.contains(r#"first-keystroke="shift F6""#), "{xml}");
 	}
 
 	#[test]

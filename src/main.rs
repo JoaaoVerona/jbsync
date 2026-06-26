@@ -8,6 +8,7 @@
 mod appliers;
 mod cli;
 mod config;
+mod default_keymap;
 mod discovery;
 mod extract;
 mod launcher;

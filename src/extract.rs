@@ -383,7 +383,7 @@ fn build_config(
 		extra: vec![],
 	});
 
-	let keymap = extract_keymap(dir, portable_keymap);
+	let keymap = extract_keymap(dir, &primary.product, portable_keymap);
 
 	Ok(Config {
 		schema: Some("./jbsync.schema.json".to_string()),
@@ -576,7 +576,7 @@ fn parse_xmx(line: &str) -> Option<u32> {
 // keymap reverse-engineering
 // ---------------------------------------------------------------------------
 
-fn extract_keymap(dir: &Path, portable: bool) -> Option<KeymapCfg> {
+fn extract_keymap(dir: &Path, product: &str, portable: bool) -> Option<KeymapCfg> {
 	// The active-keymap pointer lives in the per-OS settings subdir.
 	let active_rel = format!("options/{}/keymap.xml", Os::host().settings_subdir());
 	let active = read(dir, &active_rel).and_then(|xml| get_attr(&xml, "KeymapManager", "active_keymap", None, "name"));
@@ -585,7 +585,85 @@ fn extract_keymap(dir: &Path, portable: bool) -> Option<KeymapCfg> {
 	// Portable: rewrite the host's primary keyboard modifier (Ctrl on Linux/
 	// Windows, Cmd on macOS) to `mod` so it follows the platform on apply.
 	let mod_key = portable.then(|| Os::host().primary_modifier());
-	parse_keymap(&xml, mod_key)
+	let mut km = parse_keymap(&xml, mod_key)?;
+
+	// The user's keymap file stores only *deviations* from its parent default
+	// keymap, so inherited bindings (e.g. Find = Ctrl+F) never appear here and the
+	// Ctrl→Cmd port can't act on them. When portable, resolve the parent chain
+	// from the IDE install and materialise the inherited *primary-modifier*
+	// bindings explicitly — those are the ones whose meaning changes across
+	// platforms, so on macOS they must port to Cmd instead of being re-inherited
+	// as the OS's own default. Non-primary-modifier defaults (function keys,
+	// Alt-combos) are identical on every OS and stay inherited.
+	if let Some(mk) = mod_key {
+		match crate::default_keymap::locate_keymap_jar(product, Os::host()) {
+			Some(jar) => {
+				let mut added = 0usize;
+				for (id, binding) in resolve_default_chain(&jar, &km.parent, Some(mk)) {
+					if !km.bindings.contains_key(&id) && binding_has_mod(&binding) {
+						km.bindings.insert(id, binding);
+						added += 1;
+					}
+				}
+				if added == 0 {
+					eprintln!(
+						"  warning: --portable-keymap found the default-keymap jar but resolved 0 inherited \
+						 bindings for {product} (parent \"{}\"). Inherited shortcuts like Ctrl+F may not port.",
+						km.parent
+					);
+				} else {
+					println!("  portable-keymap: materialised {added} inherited shortcut(s) for {product}");
+				}
+			}
+			None => eprintln!(
+				"  warning: --portable-keymap could not locate {product}'s default-keymap jar (set \
+				 JBSYNC_LAUNCHER to the IDE launcher). Only your *explicit* keymap overrides were captured; \
+				 inherited defaults like Ctrl+F will NOT be ported to Cmd on macOS."
+			),
+		}
+	}
+	Some(km)
+}
+
+/// Resolve a default keymap's full parent chain (read from the IDE jar) into one
+/// flat action→binding map, a child keymap's bindings overriding its parent's.
+/// `mod_key` rewrites the source primary modifier to `mod` so bindings are
+/// portable. Cycles and missing files terminate the walk.
+fn resolve_default_chain(jar: &Path, root: &str, mod_key: Option<&str>) -> BTreeMap<String, Binding> {
+	fn walk(
+		jar: &Path,
+		name: &str,
+		mod_key: Option<&str>,
+		seen: &mut Vec<String>,
+		out: &mut BTreeMap<String, Binding>,
+	) {
+		if seen.iter().any(|n| n == name) {
+			return;
+		}
+		seen.push(name.to_string());
+		let Some(xml) = crate::default_keymap::read_keymap_xml(jar, name) else {
+			return;
+		};
+		let Some(km) = parse_keymap(&xml, mod_key) else {
+			return;
+		};
+		// Resolve the parent first so this keymap's bindings layer on top.
+		if km.parent != name {
+			walk(jar, &km.parent, mod_key, seen, out);
+		}
+		out.extend(km.bindings);
+	}
+	let mut out = BTreeMap::new();
+	walk(jar, root, mod_key, &mut Vec::new(), &mut out);
+	out
+}
+
+/// True if any of a binding's keystroke specs contains the portable `mod` token
+/// — i.e. it uses the primary modifier and thus changes meaning across platforms.
+fn binding_has_mod(b: &Binding) -> bool {
+	b.keystrokes()
+		.iter()
+		.any(|spec| spec.split([',', '+', ' ']).any(|t| t.eq_ignore_ascii_case("mod")))
 }
 
 fn locate_keymap_file(dir: &Path, active: Option<&str>) -> Option<PathBuf> {
@@ -719,11 +797,22 @@ fn on_close(b: &BytesEnd, cur: &mut Option<(String, Vec<String>, bool)>, binding
 fn keystroke_to_spec(ks: &str, mod_key: Option<&str>) -> String {
 	ks.split_whitespace()
 		.map(|tok| match mod_key {
-			Some(m) if tok.eq_ignore_ascii_case(m) => "mod",
+			Some(m) if is_primary_modifier(tok, m) => "mod",
 			_ => tok,
 		})
 		.collect::<Vec<_>>()
 		.join("+")
+}
+
+/// Whether `tok` is the primary modifier `mod_key` in any JetBrains/AWT spelling.
+/// The bundled default keymaps use the long forms ("control"/"meta"), so we match
+/// the whole family — not just the short token `primary_modifier()` returns.
+fn is_primary_modifier(tok: &str, mod_key: &str) -> bool {
+	let t = tok.to_ascii_lowercase();
+	match mod_key {
+		"meta" => matches!(t.as_str(), "meta" | "cmd" | "command"),
+		_ => matches!(t.as_str(), "ctrl" | "control"),
+	}
 }
 
 /// "Verona (Linux)" -> "Verona".
@@ -841,5 +930,90 @@ mod tests {
 		assert!(matches!(km.bindings.get("C"), Some(Binding::One(s)) if s == "alt+enter"));
 		// mouse modifiers stay literal (Ctrl-click stays Ctrl-click)
 		assert!(matches!(km.bindings.get("M"), Some(Binding::One(s)) if s == "control+button1"));
+	}
+
+	#[test]
+	fn long_form_control_is_recognised_as_primary_modifier() {
+		// Bundled default keymaps spell it "control"/"meta", not "ctrl"/"cmd".
+		let xml = r#"<keymap version="1" name="D" parent="$default">
+  <action id="Find"><keyboard-shortcut first-keystroke="control F" /></action>
+  <action id="Mac"><keyboard-shortcut first-keystroke="meta F" /></action>
+</keymap>"#;
+		let on_linux = parse_keymap(xml, Some("ctrl")).unwrap();
+		assert!(matches!(on_linux.bindings.get("Find"), Some(Binding::One(s)) if s == "mod+F"));
+		// "meta" is not the primary modifier on Linux, so it stays literal.
+		assert!(matches!(on_linux.bindings.get("Mac"), Some(Binding::One(s)) if s == "meta+F"));
+
+		let on_mac = parse_keymap(xml, Some("meta")).unwrap();
+		assert!(matches!(on_mac.bindings.get("Mac"), Some(Binding::One(s)) if s == "mod+F"));
+		assert!(matches!(on_mac.bindings.get("Find"), Some(Binding::One(s)) if s == "control+F"));
+	}
+
+	fn jar_with(entries: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+		use std::io::Write;
+		use zip::write::SimpleFileOptions;
+		let tmp = tempfile::tempdir().unwrap();
+		let jar = tmp.path().join("platform.jar");
+		let file = std::fs::File::create(&jar).unwrap();
+		let mut zip = zip::ZipWriter::new(file);
+		for (name, body) in entries {
+			zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+			zip.write_all(body.as_bytes()).unwrap();
+		}
+		zip.finish().unwrap();
+		(tmp, jar)
+	}
+
+	#[test]
+	fn resolves_parent_chain_with_child_overriding_parent() {
+		let (_tmp, jar) = jar_with(&[
+			(
+				"keymaps/$default.xml",
+				r#"<keymap name="$default" version="1">
+  <action id="Find">
+    <keyboard-shortcut first-keystroke="control F" />
+    <keyboard-shortcut first-keystroke="alt F3" />
+  </action>
+  <action id="FindNext"><keyboard-shortcut first-keystroke="alt F3" /></action>
+  <action id="Rename"><keyboard-shortcut first-keystroke="control alt S" /></action>
+</keymap>"#,
+			),
+			(
+				"keymaps/macOS.xml",
+				r#"<keymap name="macOS" parent="$default" version="1">
+  <action id="Find"><keyboard-shortcut first-keystroke="meta F" /></action>
+</keymap>"#,
+			),
+		]);
+
+		// Resolve the macOS chain as if on macOS (primary modifier = meta).
+		let resolved = resolve_default_chain(&jar, "macOS", Some("meta"));
+		// macOS's Find overrides $default's (single meta→mod, not the two-shortcut form).
+		assert!(matches!(resolved.get("Find"), Some(Binding::One(s)) if s == "mod+F"));
+		// Inherited from $default, untouched by the macOS layer.
+		assert!(matches!(resolved.get("FindNext"), Some(Binding::One(s)) if s == "alt+F3"));
+		// On the macOS chain the primary modifier is Cmd, so an inherited literal
+		// `control` binding stays Ctrl (macOS keeps those as Ctrl) — not ported.
+		assert!(matches!(resolved.get("Rename"), Some(Binding::One(s)) if s == "control+alt+S"));
+	}
+
+	#[test]
+	fn only_primary_modifier_defaults_are_materialised() {
+		let (_tmp, jar) = jar_with(&[(
+			"keymaps/$default.xml",
+			r#"<keymap name="$default" version="1">
+  <action id="Find"><keyboard-shortcut first-keystroke="control F" /></action>
+  <action id="FindNext"><keyboard-shortcut first-keystroke="alt F3" /></action>
+  <action id="GotoDecl"><mouse-shortcut keystroke="control button1" /></action>
+</keymap>"#,
+		)]);
+
+		let resolved = resolve_default_chain(&jar, "$default", Some("ctrl"));
+		// Find uses the primary modifier → eligible to materialise.
+		assert!(binding_has_mod(resolved.get("Find").unwrap()));
+		// A function-key combo is identical on every OS → left to inherit.
+		assert!(!binding_has_mod(resolved.get("FindNext").unwrap()));
+		// Mouse modifiers stay literal, so Ctrl-click is never treated as `mod`.
+		assert!(!binding_has_mod(resolved.get("GotoDecl").unwrap()));
 	}
 }
