@@ -680,8 +680,8 @@ fn binding_is_empty(b: &Binding) -> bool {
 
 /// Fold component-declared shortcuts (scanned from every install jar) into the
 /// keymap-file defaults. A component binding fills an action the keymap file
-/// leaves empty or absent; an explicit keymap-file binding wins. Mouse shortcuts
-/// and removals are dropped (only portable keyboard bindings matter here).
+/// leaves empty or absent; an explicit keymap-file binding wins. Removals are
+/// dropped; mouse shortcuts are kept (they port the primary modifier too).
 fn merge_component_defaults(
 	jar: &Path,
 	keymap_name: &str,
@@ -694,7 +694,7 @@ fn merge_component_defaults(
 		}
 		let specs: Vec<String> = shortcuts
 			.iter()
-			.filter(|s| !s.remove && !s.mouse)
+			.filter(|s| !s.remove)
 			.map(|s| {
 				let mut spec = keystroke_to_spec(&s.first, mod_key);
 				if let Some(sec) = &s.second {
@@ -808,12 +808,13 @@ fn on_open(
 			}
 		}
 		"mouse-shortcut" => {
-			// e.g. "control button1" / "button1 doubleClick" -> "control+button1".
-			// Mouse modifiers are always kept literal (Ctrl-click stays Ctrl-click).
+			// e.g. "control button1" / "button1 doubleClick" -> "mod+button1".
+			// Mouse shortcuts port the primary modifier too (Ctrl-click -> Cmd-click
+			// on macOS), same as keyboard shortcuts under --portable-keymap.
 			if let Some(c) = cur.as_mut() {
 				c.2 = true;
 				if let Some(ks) = tag_attr(b, "keystroke") {
-					c.1.push(keystroke_to_spec(&ks, None));
+					c.1.push(keystroke_to_spec(&ks, mod_key));
 				}
 			}
 		}
@@ -978,8 +979,21 @@ mod tests {
 		assert!(matches!(km.bindings.get("B"), Some(Binding::One(s)) if s == "shift+mod+w"));
 		// non-primary modifiers stay literal
 		assert!(matches!(km.bindings.get("C"), Some(Binding::One(s)) if s == "alt+enter"));
-		// mouse modifiers stay literal (Ctrl-click stays Ctrl-click)
-		assert!(matches!(km.bindings.get("M"), Some(Binding::One(s)) if s == "control+button1"));
+		// mouse shortcuts ALSO port the primary modifier (Ctrl-click -> Cmd-click on macOS)
+		assert!(matches!(km.bindings.get("M"), Some(Binding::One(s)) if s == "mod+button1"));
+	}
+
+	#[test]
+	fn portable_mouse_shortcut_round_trips_per_os() {
+		use crate::appliers::keymap::generate;
+		let xml = r#"<keymap version="1" name="V (Linux)" parent="$default">
+  <action id="GotoDeclaration"><mouse-shortcut keystroke="control button1" /></action>
+</keymap>"#;
+		let km = parse_keymap(xml, Some("ctrl")).unwrap();
+		assert!(matches!(km.bindings.get("GotoDeclaration"), Some(Binding::One(s)) if s == "mod+button1"));
+		// Cmd-click on macOS, Ctrl-click back on Linux/Windows.
+		assert!(generate(&km, Os::Macos).contains(r#"<mouse-shortcut keystroke="meta button1" />"#));
+		assert!(generate(&km, Os::Linux).contains(r#"<mouse-shortcut keystroke="control button1" />"#));
 	}
 
 	#[test]
@@ -1063,8 +1077,8 @@ mod tests {
 		assert!(binding_has_mod(resolved.get("Find").unwrap()));
 		// A function-key combo is identical on every OS → left to inherit.
 		assert!(!binding_has_mod(resolved.get("FindNext").unwrap()));
-		// Mouse modifiers stay literal, so Ctrl-click is never treated as `mod`.
-		assert!(!binding_has_mod(resolved.get("GotoDecl").unwrap()));
+		// A primary-modifier MOUSE shortcut ports too (Ctrl-click → Cmd-click).
+		assert!(binding_has_mod(resolved.get("GotoDecl").unwrap()));
 	}
 
 	#[test]

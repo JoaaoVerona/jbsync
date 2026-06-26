@@ -204,15 +204,17 @@ fn jar_has(jar: &Path, name: &str) -> bool {
 	.unwrap_or(false)
 }
 
-/// One shortcut declared inline in a component/plugin action descriptor.
+/// One shortcut declared inline in a component/plugin action descriptor. Mouse
+/// (`<mouse-shortcut keystroke=…>`) and keyboard (`<keyboard-shortcut
+/// first-keystroke=…>`) collapse to the same shape once parsed — a mouse
+/// keystroke like "control button1" carries its button token in `first` and is
+/// resolved by the `buttonN` detection on the generate side.
 #[derive(Debug, Clone)]
 pub struct CompShortcut {
 	pub first: String,
 	pub second: Option<String>,
 	/// `remove="true"`: the declaration *removes* an inherited shortcut.
 	pub remove: bool,
-	/// A `<mouse-shortcut>` rather than a `<keyboard-shortcut>`.
-	pub mouse: bool,
 }
 
 /// Scan every jar in the install (`lib/` + bundled `plugins/`) for shortcuts that
@@ -330,12 +332,7 @@ fn shortcut_from(b: &quick_xml::events::BytesStart, mouse: bool) -> Option<CompS
 	} else {
 		(attr(b, "first-keystroke")?, attr(b, "second-keystroke"))
 	};
-	Some(CompShortcut {
-		first,
-		second,
-		remove,
-		mouse,
-	})
+	Some(CompShortcut { first, second, remove })
 }
 
 fn attr(b: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
@@ -429,7 +426,7 @@ mod tests {
 		let push = &out.get("Vcs.Push").unwrap();
 		assert_eq!(push.len(), 1, "only the $default variant, not the Mac OS X one");
 		assert_eq!(push[0].first, "control shift K");
-		assert!(!push[0].remove && !push[0].mouse);
+		assert!(!push[0].remove);
 
 		let clone = &out.get("EditorClone").unwrap()[0];
 		assert_eq!(clone.first, "control G");

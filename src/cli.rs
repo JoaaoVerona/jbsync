@@ -105,7 +105,7 @@ struct CreateArgs {
 	primary: Option<String>,
 	/// Emit keymap shortcuts with the platform-relative `mod` modifier instead of
 	/// literal Ctrl/Cmd, so they follow the OS on apply (Ctrl on Linux/Windows,
-	/// Cmd on macOS). Mouse shortcuts stay literal.
+	/// Cmd on macOS). Applies to mouse shortcuts too (Ctrl-click → Cmd-click).
 	#[arg(long)]
 	portable_keymap: bool,
 }
