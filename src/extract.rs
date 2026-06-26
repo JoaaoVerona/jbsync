@@ -598,8 +598,14 @@ fn extract_keymap(dir: &Path, product: &str, portable: bool) -> Option<KeymapCfg
 	if let Some(mk) = mod_key {
 		match crate::default_keymap::locate_keymap_jar(product, Os::host()) {
 			Some(jar) => {
+				let mut defaults = resolve_default_chain(&jar, &km.parent, Some(mk));
+				// Plugins/components declare their default shortcuts inline in action
+				// descriptors (Git push = Ctrl+Shift+K, etc.), not in keymaps/*.xml,
+				// so fold those in too. They fill actions the keymap file leaves
+				// empty/absent; a real binding already in the file wins.
+				merge_component_defaults(&jar, &km.parent, Some(mk), &mut defaults);
 				let mut added = 0usize;
-				for (id, binding) in resolve_default_chain(&jar, &km.parent, Some(mk)) {
+				for (id, binding) in defaults {
 					if !km.bindings.contains_key(&id) && binding_has_mod(&binding) {
 						km.bindings.insert(id, binding);
 						added += 1;
@@ -664,6 +670,50 @@ fn binding_has_mod(b: &Binding) -> bool {
 	b.keystrokes()
 		.iter()
 		.any(|spec| spec.split([',', '+', ' ']).any(|t| t.eq_ignore_ascii_case("mod")))
+}
+
+/// True if a binding carries no actual keystroke (a removal / placeholder, e.g.
+/// `<action id="Vcs.Push"/>` in the keymap file before the plugin fills it).
+fn binding_is_empty(b: &Binding) -> bool {
+	b.keystrokes().iter().all(|s| s.trim().is_empty())
+}
+
+/// Fold component-declared shortcuts (scanned from every install jar) into the
+/// keymap-file defaults. A component binding fills an action the keymap file
+/// leaves empty or absent; an explicit keymap-file binding wins. Mouse shortcuts
+/// and removals are dropped (only portable keyboard bindings matter here).
+fn merge_component_defaults(
+	jar: &Path,
+	keymap_name: &str,
+	mod_key: Option<&str>,
+	defaults: &mut BTreeMap<String, Binding>,
+) {
+	for (id, shortcuts) in crate::default_keymap::component_shortcuts(jar, keymap_name) {
+		if defaults.get(&id).is_some_and(|b| !binding_is_empty(b)) {
+			continue; // the keymap file already binds it; don't override.
+		}
+		let specs: Vec<String> = shortcuts
+			.iter()
+			.filter(|s| !s.remove && !s.mouse)
+			.map(|s| {
+				let mut spec = keystroke_to_spec(&s.first, mod_key);
+				if let Some(sec) = &s.second {
+					spec.push_str(", ");
+					spec.push_str(&keystroke_to_spec(sec, mod_key));
+				}
+				spec
+			})
+			.collect();
+		match specs.len() {
+			0 => {}
+			1 => {
+				defaults.insert(id, Binding::One(specs.into_iter().next().unwrap()));
+			}
+			_ => {
+				defaults.insert(id, Binding::Many(specs));
+			}
+		}
+	}
 }
 
 fn locate_keymap_file(dir: &Path, active: Option<&str>) -> Option<PathBuf> {
@@ -1015,5 +1065,50 @@ mod tests {
 		assert!(!binding_has_mod(resolved.get("FindNext").unwrap()));
 		// Mouse modifiers stay literal, so Ctrl-click is never treated as `mod`.
 		assert!(!binding_has_mod(resolved.get("GotoDecl").unwrap()));
+	}
+
+	#[test]
+	fn component_defaults_fill_empty_placeholders_but_not_real_bindings() {
+		// $default.xml has Vcs.Push as a bare placeholder; the plugin contributes
+		// the real shortcut inline. The component scan derives the install from the
+		// jar living in `<home>/lib/`, so place it there.
+		use std::io::Write;
+		use zip::write::SimpleFileOptions;
+		let tmp = tempfile::tempdir().unwrap();
+		let lib = tmp.path().join("lib");
+		std::fs::create_dir_all(&lib).unwrap();
+		let jar = lib.join("platform.jar");
+		let f = std::fs::File::create(&jar).unwrap();
+		let mut zip = zip::ZipWriter::new(f);
+		for (name, body) in [
+			(
+				"keymaps/$default.xml",
+				r#"<keymap name="$default" version="1">
+  <action id="Vcs.Push"/>
+  <action id="Find"><keyboard-shortcut first-keystroke="control F" /></action>
+</keymap>"#,
+			),
+			(
+				"META-INF/vcs.xml",
+				r#"<idea-plugin><actions>
+  <action id="Vcs.Push"><keyboard-shortcut first-keystroke="control shift K" keymap="$default"/></action>
+  <action id="Find"><keyboard-shortcut first-keystroke="control shift ENTER" keymap="$default"/></action>
+</actions></idea-plugin>"#,
+			),
+		] {
+			zip.start_file(name, SimpleFileOptions::default()).unwrap();
+			zip.write_all(body.as_bytes()).unwrap();
+		}
+		zip.finish().unwrap();
+
+		let mut defaults = resolve_default_chain(&jar, "$default", Some("ctrl"));
+		// Pre-merge: Push is an empty placeholder, Find has a real binding.
+		assert!(binding_is_empty(defaults.get("Vcs.Push").unwrap()));
+		merge_component_defaults(&jar, "$default", Some("ctrl"), &mut defaults);
+
+		// The empty placeholder is filled from the component declaration…
+		assert!(matches!(defaults.get("Vcs.Push"), Some(Binding::One(s)) if s == "mod+shift+K"));
+		// …but Find's real keymap-file binding is NOT overridden by the component one.
+		assert!(matches!(defaults.get("Find"), Some(Binding::One(s)) if s == "mod+F"));
 	}
 }

@@ -7,11 +7,21 @@
 //! the inherited primary-modifier bindings can be ported (Ctrl→Cmd on macOS)
 //! instead of silently re-inheriting the target platform's own default.
 //!
-//! This module is the filesystem/jar half: find the jar and read a named keymap
-//! out of it. The parse + parent-chain merge live in `extract` (next to the
-//! keymap parser they reuse).
+//! There is a SECOND source of default shortcuts: plugins/components declare
+//! theirs *inline* in action definitions (`<action id=…><keyboard-shortcut
+//! keymap="$default" first-keystroke=…/></action>`), scattered across every jar
+//! in `lib/` and `plugins/` — NOT in the `keymaps/*.xml` files. Git push
+//! (Ctrl+Shift+K), most VCS/refactor actions, etc. live there. `component_shortcuts`
+//! scans for those.
+//!
+//! This module is the filesystem/jar half: find the jar, read a named keymap out
+//! of it, and scan component shortcuts. The parse + merge live in `extract` (next
+//! to the keymap parser they reuse).
 
 use crate::platform::Os;
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -194,6 +204,149 @@ fn jar_has(jar: &Path, name: &str) -> bool {
 	.unwrap_or(false)
 }
 
+/// One shortcut declared inline in a component/plugin action descriptor.
+#[derive(Debug, Clone)]
+pub struct CompShortcut {
+	pub first: String,
+	pub second: Option<String>,
+	/// `remove="true"`: the declaration *removes* an inherited shortcut.
+	pub remove: bool,
+	/// A `<mouse-shortcut>` rather than a `<keyboard-shortcut>`.
+	pub mouse: bool,
+}
+
+/// Scan every jar in the install (`lib/` + bundled `plugins/`) for shortcuts that
+/// components contribute to `keymap_name` (e.g. "$default") via inline
+/// `<keyboard-shortcut>`/`<mouse-shortcut>` elements. Returns action id → its
+/// declared shortcuts. `platform_jar` anchors the install (it lives in `lib/`).
+pub fn component_shortcuts(platform_jar: &Path, keymap_name: &str) -> BTreeMap<String, Vec<CompShortcut>> {
+	let mut out: BTreeMap<String, Vec<CompShortcut>> = BTreeMap::new();
+	for jar in install_jars(platform_jar) {
+		scan_jar_components(&jar, keymap_name, &mut out);
+	}
+	out
+}
+
+/// Every jar under the install's `lib/` and `plugins/*/lib/`.
+fn install_jars(platform_jar: &Path) -> Vec<PathBuf> {
+	let Some(home) = platform_jar.parent().and_then(Path::parent) else {
+		return vec![];
+	};
+	let mut jars = Vec::new();
+	collect_jars(&home.join("lib"), &mut jars);
+	if let Ok(plugins) = std::fs::read_dir(home.join("plugins")) {
+		for p in plugins.flatten() {
+			collect_jars(&p.path().join("lib"), &mut jars);
+		}
+	}
+	jars
+}
+
+fn collect_jars(dir: &Path, out: &mut Vec<PathBuf>) {
+	if let Ok(rd) = std::fs::read_dir(dir) {
+		for e in rd.flatten() {
+			let p = e.path();
+			if p.extension().is_some_and(|x| x == "jar") {
+				out.push(p);
+			}
+		}
+	}
+}
+
+fn scan_jar_components(jar: &Path, keymap_name: &str, out: &mut BTreeMap<String, Vec<CompShortcut>>) {
+	let Ok(file) = std::fs::File::open(jar) else {
+		return;
+	};
+	let Ok(mut archive) = zip::ZipArchive::new(file) else {
+		return;
+	};
+	for i in 0..archive.len() {
+		let Ok(mut entry) = archive.by_index(i) else {
+			continue;
+		};
+		if !entry.name().ends_with(".xml") {
+			continue;
+		}
+		let mut xml = String::new();
+		if entry.read_to_string(&mut xml).is_err() {
+			continue;
+		}
+		// Cheap pre-filter: only parse descriptors that bind shortcuts to a keymap.
+		if xml.contains("keymap=") {
+			parse_component_xml(&xml, keymap_name, out);
+		}
+	}
+}
+
+/// Parse one component descriptor, collecting `<keyboard-shortcut>`/`<mouse-shortcut>`
+/// elements whose `keymap` attribute equals `keymap_name`, attributing each to its
+/// nearest enclosing `<action id=…>`/`<reference ref=…>`.
+fn parse_component_xml(xml: &str, keymap_name: &str, out: &mut BTreeMap<String, Vec<CompShortcut>>) {
+	let mut reader = Reader::from_str(xml);
+	// One entry per open element (so End pops cleanly); holds the action/reference
+	// id when the element introduces one, else None.
+	let mut stack: Vec<Option<String>> = Vec::new();
+	loop {
+		match reader.read_event() {
+			Ok(Event::Start(b)) => stack.push(action_id(&b)),
+			Ok(Event::End(_)) => {
+				stack.pop();
+			}
+			Ok(Event::Empty(b)) => {
+				let name = b.name();
+				let (kb, mouse) = (
+					name.as_ref() == b"keyboard-shortcut",
+					name.as_ref() == b"mouse-shortcut",
+				);
+				if (kb || mouse) && attr(&b, "keymap").as_deref() == Some(keymap_name) {
+					if let Some(id) = stack.iter().rev().flatten().next() {
+						if let Some(sc) = shortcut_from(&b, mouse) {
+							out.entry(id.clone()).or_default().push(sc);
+						}
+					}
+				}
+			}
+			Ok(Event::Eof) => break,
+			Err(_) => break,
+			_ => {}
+		}
+	}
+}
+
+/// The id an element contributes to the stack: `<action id=…>` or
+/// `<reference ref=…/id=…>` carry one; everything else contributes `None`.
+fn action_id(b: &quick_xml::events::BytesStart) -> Option<String> {
+	match b.name().as_ref() {
+		b"action" => attr(b, "id"),
+		b"reference" => attr(b, "ref").or_else(|| attr(b, "id")),
+		_ => None,
+	}
+}
+
+fn shortcut_from(b: &quick_xml::events::BytesStart, mouse: bool) -> Option<CompShortcut> {
+	let remove = attr(b, "remove").as_deref() == Some("true");
+	let (first, second) = if mouse {
+		(attr(b, "keystroke")?, None)
+	} else {
+		(attr(b, "first-keystroke")?, attr(b, "second-keystroke"))
+	};
+	Some(CompShortcut {
+		first,
+		second,
+		remove,
+		mouse,
+	})
+}
+
+fn attr(b: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
+	for a in b.attributes().with_checks(false).flatten() {
+		if a.key.as_ref() == key.as_bytes() {
+			return Some(String::from_utf8_lossy(&a.value).into_owned());
+		}
+	}
+	None
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -250,6 +403,39 @@ mod tests {
 		assert!(matches_product(Path::new("/x/IntelliJIdea2026.1"), "IntelliJIdea"));
 		assert!(matches_product(Path::new("/x/android-studio"), "AndroidStudio"));
 		assert!(!matches_product(Path::new("/x/webstorm"), "IntelliJIdea"));
+	}
+
+	#[test]
+	fn component_shortcuts_parse_inline_action_declarations() {
+		// Mirrors how plugins ship default shortcuts: inline in the action def,
+		// keyed by keymap name, including reference-based and per-keymap variants.
+		let xml = r#"<idea-plugin>
+  <actions>
+    <action id="Vcs.Push" class="x.VcsPushAction">
+      <keyboard-shortcut first-keystroke="control shift K" keymap="$default"/>
+      <keyboard-shortcut first-keystroke="meta shift K" keymap="Mac OS X 10.5+"/>
+    </action>
+    <reference ref="EditorClone">
+      <keyboard-shortcut first-keystroke="control G" second-keystroke="control G" keymap="$default"/>
+    </reference>
+    <action id="Some.Removed">
+      <keyboard-shortcut first-keystroke="control alt X" keymap="$default" remove="true"/>
+    </action>
+  </actions>
+</idea-plugin>"#;
+		let mut out = BTreeMap::new();
+		parse_component_xml(xml, "$default", &mut out);
+
+		let push = &out.get("Vcs.Push").unwrap();
+		assert_eq!(push.len(), 1, "only the $default variant, not the Mac OS X one");
+		assert_eq!(push[0].first, "control shift K");
+		assert!(!push[0].remove && !push[0].mouse);
+
+		let clone = &out.get("EditorClone").unwrap()[0];
+		assert_eq!(clone.first, "control G");
+		assert_eq!(clone.second.as_deref(), Some("control G"));
+
+		assert!(out.get("Some.Removed").unwrap()[0].remove);
 	}
 
 	#[test]

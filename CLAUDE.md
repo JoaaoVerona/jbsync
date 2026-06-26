@@ -52,7 +52,12 @@ run release patch   # bump version (major|minor|patch), tag, push -> CI builds r
   `extract::resolve_default_chain` walks the parent chain into a flat binding set and
   materialises the inherited **primary-modifier** bindings explicitly (only those change
   meaning across platforms — function keys / Alt-combos stay inherited). User overrides always
-  win. NB: `keystroke_to_spec` matches the modifier *family* (`ctrl`/`control`, `meta`/`cmd`)
+  win. A SECOND source: plugins/components declare default shortcuts *inline* in action defs
+  (`<action id=…><keyboard-shortcut keymap="$default" first-keystroke=…/></action>`) scattered
+  across every `lib/`+`plugins/` jar — Git push (Ctrl+Shift+K), most VCS/refactor actions —
+  NOT in `keymaps/*.xml`. `component_shortcuts` scans all jars for these and
+  `extract::merge_component_defaults` fills empty/absent keymap-file actions from them (a real
+  keymap-file binding wins). Adds ~4s to `create`. NB: `keystroke_to_spec` matches the modifier *family* (`ctrl`/`control`, `meta`/`cmd`)
   since the jars use the long AWT spelling; `keymap::resolve_keystroke` preserves key case so
   named keys (`MINUS`, `F2`, `ENTER`) survive. Jar discovery tries the launcher first, then
   scans well-known install roots (`locate_keymap_jar`) — Windows Toolbox lives under
