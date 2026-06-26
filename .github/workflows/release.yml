@@ -11,21 +11,8 @@ on:
 
 jobs:
   release:
-    uses: Skiley/rust-binary-publish/.github/workflows/release.yml@v2.0.0
+    uses: Skiley/rust-binary-publish/.github/workflows/release.yml@v3.0.0
     permissions:
       contents: write
-      id-token: write
     with:
       tag: ${{ inputs.tag || github.ref_name }}
-      input: |
-        {
-          "type": "rust-binaries",
-          "binary-name": "jbsync"
-        }
-      outputs: |
-        [
-          {
-            "type": "github-release",
-            "extra-assets": "schema/jbsync.schema.json"
-          }
-        ]

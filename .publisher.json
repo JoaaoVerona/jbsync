@@ -1,0 +1,13 @@
+{
+	"$schema": "https://raw.githubusercontent.com/Skiley/rust-binary-publish/v3.0.0/schema/publisher.schema.json",
+	"input": {
+		"type": "rust-binaries",
+		"binary-name": "jbsync"
+	},
+	"outputs": [
+		{
+			"type": "github-release",
+			"extra-assets": "schema/jbsync.schema.json"
+		}
+	]
+}
