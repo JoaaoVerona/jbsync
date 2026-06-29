@@ -5,9 +5,6 @@ cross-platform. Replaces each editor's built-in settings sync with a single
 Git-tracked source of truth. **Pluggable**: each editor/IDE family is its own
 crate implementing a core `Editor` trait; the binary just registers them.
 
-> The repo root folder is still named `jbsync/` (history), but the project,
-> crates, binary, env vars, and configs are all `idesync`.
-
 ## CLI shape
 
 ```
