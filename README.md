@@ -152,8 +152,8 @@ IDEs and writes a portable, self-contained config you can commit:
 
 - `DIR/idesync.json` — extracted fonts, UI/editor toggles, registry settings,
   active scheme + code style, per-target plugins, vmoptions heap, and the active
-  keymap reversed into bindings.
-- `DIR/idesync-jetbrains.schema.json` — a copy of the schema (for editor autocomplete).
+  keymap reversed into bindings. Its `$schema` points at the schema attached to
+  the latest GitHub release (no local copy is written).
 - `DIR/color-schemes/*.icls` and `DIR/code-styles/*.xml` — the scheme files
   themselves, **merged across IDEs**.
 - `DIR/templates/…`, `DIR/fileTemplates/…`, `DIR/inspectionProfiles/…` — shared
@@ -161,9 +161,8 @@ IDEs and writes a portable, self-contained config you can commit:
 - `DIR/targets/<product>/options/…` — IDE-specific `options/*.xml` (menus, file
   types, window layouts, …), one copy per IDE, applied to that IDE only.
 
-Everything but `idesync.json` / `idesync-jetbrains.schema.json` is organised into
-subdirectories. `create` is strictly read-only with respect to your IDEs — it
-only writes into `DIR`.
+Everything but `idesync.json` is organised into subdirectories. `create` is
+strictly read-only with respect to your IDEs — it only writes into `DIR`.
 
 **Cross-IDE scheme merge.** Different IDEs flesh out the _same_ named scheme with
 different language pieces — WebStorm's "ABC" carries `JS.*`/`CSS.*` attributes,
@@ -332,13 +331,13 @@ with `IDESYNC_VSC_CONFIG_HOME` and the home dir used to find each editor's
 Each editor has its own schema:
 [`idesync-jetbrains.schema.json`](crates/jetbrains/schema/idesync-jetbrains.schema.json)
 and [`idesync-vscode.schema.json`](crates/vscode/schema/idesync-vscode.schema.json).
-The JetBrains sections below cover every `jb` field; the VSCode config is
-described under [VSCode-family editors](#vscode-family-editors-vsc). `create`
-copies the matching schema next to the config it writes, so reference it for
-editor autocomplete:
+Both are attached to every GitHub release. The JetBrains sections below cover
+every `jb` field; the VSCode config is described under
+[VSCode-family editors](#vscode-family-editors-vsc). `create` sets `$schema` to
+the latest release's schema so editors fetch it for autocomplete:
 
 ```json
-{ "$schema": "./idesync-jetbrains.schema.json", "...": "..." }
+{ "$schema": "https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-jetbrains.schema.json", "...": "..." }
 ```
 
 The quickest way to a real config is `idesync jb create --out ./dotfiles`, which
@@ -384,7 +383,7 @@ provides raw VSCode values that idesync applies to every targeted editor.
 ```jsonc
 // vsc.json — its own file, separate from the JetBrains config
 {
-  "$schema": "./idesync-vscode.schema.json",
+  "$schema": "https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-vscode.schema.json",
 
   // Empty/omitted `targets` = apply to every discovered VSCode-family editor.
   "targets": ["Code", "Cursor"],

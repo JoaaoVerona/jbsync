@@ -14,7 +14,10 @@ use quick_xml::reader::Reader;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_JSON: &str = include_str!("../schema/idesync-jetbrains.schema.json");
+/// `$schema` for generated configs: the schema attached to the latest GitHub
+/// release (uploaded by the release workflow via `.publisher.json` extra-assets).
+const SCHEMA_URL: &str =
+	"https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-jetbrains.schema.json";
 
 pub struct CreateOptions {
 	pub out_dir: PathBuf,
@@ -72,11 +75,11 @@ pub fn create(opts: &CreateOptions) -> Result<()> {
 		per_target_total += target.files.len();
 	}
 
-	// Write the config + a copy of the schema for editor autocomplete.
+	// Write the config. Its `$schema` points at the schema attached to the latest
+	// GitHub release, so editors fetch it for autocomplete without a local copy.
 	let json = serde_json::to_string_pretty(&cfg)? + "\n";
 	let cfg_path = opts.out_dir.join("idesync.json");
 	std::fs::write(&cfg_path, json).with_context(|| format!("writing {}", cfg_path.display()))?;
-	std::fs::write(opts.out_dir.join("idesync-jetbrains.schema.json"), SCHEMA_JSON)?;
 
 	println!("wrote {}", cfg_path.display());
 	println!(
@@ -386,7 +389,7 @@ fn build_config(
 	let keymap = extract_keymap(dir, &primary.product, portable_keymap);
 
 	Ok(Config {
-		schema: Some("./idesync-jetbrains.schema.json".to_string()),
+		schema: Some(SCHEMA_URL.to_string()),
 		// Plugins are emitted PER TARGET (each IDE has its own disabled/installed
 		// set), so there is no global plugins block to over-disable.
 		targets: ides.iter().map(extract_target_plugins).collect(),

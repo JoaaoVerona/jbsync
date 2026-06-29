@@ -100,7 +100,8 @@ fn product_targets_one_editor_and_rejects_unknown() {
 }
 
 /// `vsc create` snapshots a discovered editor's settings + keybindings + the
-/// installed extensions into a portable config (and writes the schema).
+/// installed extensions into a portable config whose `$schema` points at the
+/// latest release (no local schema copy).
 #[test]
 fn create_captures_settings_keybindings_and_extensions() {
 	let tmp = tempfile::tempdir().unwrap();
@@ -134,7 +135,14 @@ fn create_captures_settings_keybindings_and_extensions() {
 	assert!(captured.contains(r#""editor.tabSize": 2"#), "{captured}");
 	assert!(captured.contains("editor.action.deleteLines"), "{captured}");
 	assert!(captured.contains("rust-lang.rust-analyzer"), "{captured}");
-	assert!(out_dir.join("idesync-vscode.schema.json").exists());
+	// No local schema copy is written; `$schema` points at the latest release.
+	assert!(!out_dir.join("idesync-vscode.schema.json").exists());
+	assert!(
+		captured.contains(
+			r#""$schema": "https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-vscode.schema.json""#
+		),
+		"{captured}"
+	);
 }
 
 /// A `mod` token in the config expands on apply into a `ctrl` key + `cmd` mac

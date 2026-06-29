@@ -188,7 +188,11 @@ editor (VS Code, Insiders, VSCodium, Cursor, Windsurf).
   `Skiley/rust-binary-publish` workflow to build cross-platform binaries + GitHub
   release. `.publisher.json` sets `binary-name: idesync`, `env-prefix: IDESYNC` (so install
   scripts use `IDESYNC_INSTALL_DIR`), and attaches BOTH per-crate schemas as `extra-assets`
-  (newline-separated). The `release` Runfile target bumps `[workspace.package].version`.
+  (newline-separated) — so they're downloadable at
+  `…/releases/latest/download/idesync-<editor>.schema.json`. `create` does NOT write a local
+  schema copy; it sets each generated config's `$schema` to that latest-release URL (the
+  `SCHEMA_URL` const in `extract.rs` / `vsc cli.rs`). The schema files stay in each crate's
+  `schema/` dir as the source of truth. The `release` Runfile target bumps `[workspace.package].version`.
 
 ## Conventions / gotchas
 

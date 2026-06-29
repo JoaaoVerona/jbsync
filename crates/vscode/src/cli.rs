@@ -11,7 +11,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::Command;
 
-const SCHEMA_JSON: &str = include_str!("../schema/idesync-vscode.schema.json");
+/// `$schema` for generated configs: the schema attached to the latest GitHub
+/// release (uploaded by the release workflow via `.publisher.json` extra-assets).
+const SCHEMA_URL: &str = "https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-vscode.schema.json";
 
 /// The subcommands under `idesync vsc`.
 #[derive(Subcommand)]
@@ -314,7 +316,7 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 		install: install.into_iter().collect(),
 	});
 	let cfg = VsCodeCfg {
-		schema: Some("./idesync-vscode.schema.json".to_string()),
+		schema: Some(SCHEMA_URL.to_string()),
 		targets: vec![],
 		settings,
 		keybindings,
@@ -325,7 +327,6 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 	let json = serde_json::to_string_pretty(&cfg)? + "\n";
 	let cfg_path = out.join("idesync.json");
 	std::fs::write(&cfg_path, json).with_context(|| format!("writing {}", cfg_path.display()))?;
-	std::fs::write(out.join("idesync-vscode.schema.json"), SCHEMA_JSON)?;
 	println!(
 		"Captured {} editor(s): {} setting(s), {} keybinding(s), {} extension(s)",
 		editors.len(),

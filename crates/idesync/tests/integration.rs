@@ -591,7 +591,14 @@ fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	assert!(cfg.contains(r#""product": "RustRover""#));
 	assert!(cfg.contains(r#""name": "ABC""#));
 	assert!(cfg.contains(r#""file": "color-schemes/ABC.icls""#));
-	assert!(out.join("idesync-jetbrains.schema.json").exists());
+	// No local schema copy is written; `$schema` points at the latest release.
+	assert!(!out.join("idesync-jetbrains.schema.json").exists());
+	assert!(
+		cfg.contains(
+			r#""$schema": "https://github.com/JoaaoVerona/idesync/releases/latest/download/idesync-jetbrains.schema.json""#
+		),
+		"{cfg}"
+	);
 }
 
 #[test]
