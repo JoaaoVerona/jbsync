@@ -18,7 +18,7 @@
 //! of it, and scan component shortcuts. The parse + merge live in `extract` (next
 //! to the keymap parser they reuse).
 
-use crate::platform::Os;
+use idesync_core::Os;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::BTreeMap;
@@ -36,7 +36,7 @@ const ROOT_KEYMAP: &str = "keymaps/$default.xml";
 /// well-known install roots (Toolbox `apps/`, Program Files, `/Applications`) for
 /// a directory matching this product. The latter is what makes it work when the
 /// launcher isn't on PATH — notably on Windows, where Toolbox lives under
-/// `%LOCALAPPDATA%`, not the roaming data dir jbsync derives the launcher from.
+/// `%LOCALAPPDATA%`, not the roaming data dir idesync derives the launcher from.
 pub fn locate_keymap_jar(product: &str, os: Os) -> Option<PathBuf> {
 	for home in app_home_candidates(product, os) {
 		if let Some(jar) = jar_with_keymaps(&home.join("lib")) {

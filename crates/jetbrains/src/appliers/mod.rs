@@ -10,10 +10,10 @@ mod scheme;
 mod vmoptions;
 
 use crate::config::{Config, PluginsCfg};
-use crate::plan::{FileChange, PluginInstall};
-use crate::platform::Os;
+use crate::plan::PluginInstall;
 use anyhow::Result;
 use clap::ValueEnum;
+use idesync_core::{FileChange, Os};
 use std::path::{Path, PathBuf};
 
 /// A config section that `--exclude` can drop from apply/check. Each variant

@@ -1,0 +1,21 @@
+[package]
+name = "idesync-vscode"
+description = "idesync editor plugin for VSCode-family editors (VS Code, Insiders, VSCodium, Cursor, Windsurf)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+idesync-core = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

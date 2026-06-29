@@ -8,7 +8,7 @@
 //!   data:    Linux ~/.local/share/<Vendor>, macOS ~/Library/Application Support/<Vendor>,
 //!            Windows %APPDATA%\<Vendor>   (data = installed plugins)
 //!
-//! `JBSYNC_CONFIG_HOME` / `JBSYNC_DATA_HOME` override the JetBrains vendor dir;
+//! `IDESYNC_JB_CONFIG_HOME` / `IDESYNC_JB_DATA_HOME` override the JetBrains vendor dir;
 //! the Google vendor dir is resolved as its sibling.
 
 use anyhow::{anyhow, Context, Result};
@@ -37,18 +37,18 @@ pub fn vendor(product: &str) -> &'static str {
 	}
 }
 
-/// The JetBrains config vendor dir (overridable via `JBSYNC_CONFIG_HOME`).
+/// The JetBrains config vendor dir (overridable via `IDESYNC_JB_CONFIG_HOME`).
 pub fn jetbrains_base() -> Result<PathBuf> {
-	if let Ok(over) = std::env::var("JBSYNC_CONFIG_HOME") {
+	if let Ok(over) = std::env::var("IDESYNC_JB_CONFIG_HOME") {
 		return Ok(PathBuf::from(over));
 	}
 	let cfg = dirs::config_dir().ok_or_else(|| anyhow!("cannot determine OS config dir"))?;
 	Ok(cfg.join("JetBrains"))
 }
 
-/// The JetBrains data (installed-plugins) vendor dir (overridable via `JBSYNC_DATA_HOME`).
+/// The JetBrains data (installed-plugins) vendor dir (overridable via `IDESYNC_JB_DATA_HOME`).
 pub fn jetbrains_data_base() -> Result<PathBuf> {
-	if let Ok(over) = std::env::var("JBSYNC_DATA_HOME") {
+	if let Ok(over) = std::env::var("IDESYNC_JB_DATA_HOME") {
 		return Ok(PathBuf::from(over));
 	}
 	let data = dirs::data_dir().ok_or_else(|| anyhow!("cannot determine OS data dir"))?;
@@ -162,7 +162,7 @@ mod tests {
 
 	#[test]
 	fn list_product_versions_ignores_backup_dirs() {
-		let tmp = std::env::temp_dir().join(format!("jbsync-disco-{}", std::process::id()));
+		let tmp = std::env::temp_dir().join(format!("idesync-disco-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&tmp);
 		std::fs::create_dir_all(tmp.join("IntelliJIdea2026.1")).unwrap();
 		std::fs::create_dir_all(tmp.join("IntelliJIdea2026.1-backup")).unwrap();

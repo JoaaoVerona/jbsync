@@ -1,0 +1,51 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "idesync VSCode config",
+	"description": "Pass-through settings for VSCode-family editors (VS Code, Insiders, VSCodium, Cursor, Windsurf), applied by idesync (the `vsc` editor). Nothing is translated: these are raw VSCode values applied to every targeted editor.",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"$schema": { "type": "string" },
+		"targets": {
+			"type": "array",
+			"description": "Restrict to these editors by name. Empty = every discovered VSCode-family editor.",
+			"items": { "type": "string", "examples": ["Code", "Code - Insiders", "VSCodium", "Cursor", "Windsurf"] }
+		},
+		"settings": {
+			"type": "object",
+			"description": "Top-level settings.json keys to set. Every other key, plus comments and formatting, is preserved — only these keys are (re)written.",
+			"additionalProperties": true
+		},
+		"keybindings": {
+			"type": "array",
+			"description": "The keybindings.json array. When present, idesync OWNS keybindings.json (like a generated keymap — seed it with `create`); absent = left untouched. A `mod` modifier token is expanded on apply to Ctrl on Linux/Windows and Cmd on macOS (emitted as a `ctrl` key + a `cmd` mac override).",
+			"items": {
+				"type": "object",
+				"properties": {
+					"key": {
+						"type": "string",
+						"description": "Keystroke, e.g. \"ctrl+shift+p\". Use `mod` for the platform-primary modifier (Ctrl on Linux/Windows, Cmd on macOS); `ctrl` stays literal everywhere.",
+						"examples": ["mod+d", "ctrl+k ctrl+s"]
+					},
+					"command": { "type": "string" },
+					"when": { "type": "string" },
+					"mac": { "type": "string", "description": "macOS-specific override (set automatically when `key` uses `mod`)." },
+					"linux": { "type": "string", "description": "Linux-specific override." },
+					"win": { "type": "string", "description": "Windows-specific override." },
+					"args": {}
+				}
+			}
+		},
+		"extensions": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"install": {
+					"type": "array",
+					"description": "Marketplace extension IDs (publisher.name) to ensure installed via the editor CLI. Only missing ones are installed.",
+					"items": { "type": "string", "examples": ["rust-lang.rust-analyzer", "esbenp.prettier-vscode"] }
+				}
+			}
+		}
+	}
+}

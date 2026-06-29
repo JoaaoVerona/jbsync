@@ -6,8 +6,8 @@
 
 use super::{whole_file, Ctx};
 use crate::config::Config;
-use crate::plan::FileChange;
 use anyhow::Result;
+use idesync_core::FileChange;
 
 /// JetBrains names the user vmoptions file after the launcher binary.
 fn vmoptions_basename(product: &str) -> String {

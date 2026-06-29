@@ -1,10 +1,10 @@
 //! Locate the IDE launcher used for `installPlugins`.
 //!
-//! Search order: `JBSYNC_LAUNCHER` override -> PATH -> Toolbox scripts dir
+//! Search order: `IDESYNC_JB_LAUNCHER` override -> PATH -> Toolbox scripts dir
 //! (`<data>/JetBrains/Toolbox/scripts/<name>`). On a Toolbox install the script
 //! is named after the product (`idea`, `webstorm`, `rustrover`, `studio`, ...).
 
-use crate::platform::Os;
+use idesync_core::Os;
 use std::path::{Path, PathBuf};
 
 /// The launcher base name for a product on a given OS.
@@ -36,7 +36,7 @@ fn lower_for_os(base: &str, os: Os) -> String {
 /// Resolve a launcher path, reading the environment for overrides.
 pub fn find_launcher(product: &str, os: Os) -> Option<PathBuf> {
 	let script = script_name(product, os);
-	let over = std::env::var_os("JBSYNC_LAUNCHER").map(PathBuf::from);
+	let over = std::env::var_os("IDESYNC_JB_LAUNCHER").map(PathBuf::from);
 	let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
 		.map(|p| std::env::split_paths(&p).collect())
 		.unwrap_or_default();

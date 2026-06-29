@@ -6,9 +6,9 @@
 
 use super::{whole_file, Ctx, PatchSet};
 use crate::config::Config;
-use crate::plan::FileChange;
 use crate::xmlpatch::{ensure, ensure_option};
 use anyhow::{Context, Result};
+use idesync_core::FileChange;
 use std::path::Path;
 
 pub fn color_scheme(cfg: &Config, ctx: &Ctx, ps: &mut PatchSet) -> Result<Vec<FileChange>> {

@@ -14,10 +14,10 @@
 
 use super::{whole_file, Ctx, PatchSet};
 use crate::config::{Config, KeymapCfg};
-use crate::plan::FileChange;
-use crate::platform::Os;
 use crate::xmlpatch::ensure;
 use anyhow::Result;
+use idesync_core::FileChange;
+use idesync_core::Os;
 
 pub fn keymap(cfg: &Config, ctx: &Ctx, ps: &mut PatchSet) -> Result<Vec<FileChange>> {
 	let Some(km) = cfg.keymap.as_ref() else {

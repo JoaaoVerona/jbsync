@@ -18,15 +18,15 @@
 			"commands": "cargo clean"
 		},
 		"cli": {
-			"description": "Run the jbsync CLI, e.g. run cli list  or  run cli check ./jbsync.json",
-			"commands": "cargo run --quiet -- {{ ARGS }}"
+			"description": "Run the idesync CLI, e.g. run cli list  or  run cli jb check ./idesync.json",
+			"commands": "cargo run -p idesync --quiet -- {{ ARGS }}"
 		},
 		"install": {
 			"description": "Build a release binary and install it to ~/.local/bin",
 			"forceShell": "sh",
 			"commands": [
-				"cargo build --release",
-				{ "if": "{{ RUN.os == 'windows' }}", "then": "{{ define(bin, 'jbsync.exe') }}", "else": "{{ define(bin, 'jbsync') }}" },
+				"cargo build --release -p idesync",
+				{ "if": "{{ RUN.os == 'windows' }}", "then": "{{ define(bin, 'idesync.exe') }}", "else": "{{ define(bin, 'idesync') }}" },
 				"mkdir -p ~/.local/bin",
 				"cp target/release/{{ VAR.bin }} ~/.local/bin/{{ VAR.bin }}",
 				"echo Installed {{ VAR.bin }} to ~/.local/bin"

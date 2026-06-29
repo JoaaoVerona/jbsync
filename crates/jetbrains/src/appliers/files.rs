@@ -11,8 +11,8 @@
 
 use super::{whole_file, Ctx};
 use crate::config::Config;
-use crate::plan::FileChange;
 use anyhow::{Context, Result};
+use idesync_core::FileChange;
 use std::path::Path;
 
 pub fn copy(cfg: &Config, ctx: &Ctx) -> Result<Vec<FileChange>> {

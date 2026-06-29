@@ -1,4 +1,4 @@
-//! The user-facing JSON config model. Field names mirror `schema/jbsync.schema.json`.
+//! The user-facing JSON config model. Field names mirror `idesync-jetbrains.schema.json`.
 //! The same types are used to read configs (apply/check) and to write them (create).
 
 use anyhow::{Context, Result};

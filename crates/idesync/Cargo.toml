@@ -1,0 +1,21 @@
+[package]
+name = "idesync"
+description = "Declaratively apply IDE/editor settings from per-editor JSON configs, cross-platform. Pluggable editor support (JetBrains, VSCode)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "idesync"
+path = "src/main.rs"
+
+[dependencies]
+idesync-core = { workspace = true }
+idesync-jetbrains = { workspace = true }
+idesync-vscode = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -30,7 +30,7 @@ pub struct Def {
 const CLOSE_CONFIRM: &[(&str, &str)] = &[("ask", "ASK"), ("terminate", "TERMINATE"), ("disconnect", "DISCONNECT")];
 
 /// The full set of synced flat settings. Keep in sync with the `settings`
-/// section of `schema/jbsync.schema.json`.
+/// section of `idesync-jetbrains.schema.json`.
 pub const SETTINGS: &[Def] = &[
 	// --- appearance / UI (ui.lnf.xml UISettings) ---
 	b(

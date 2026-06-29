@@ -1,6 +1,6 @@
 //! End-to-end tests that drive the real compiled binary against seeded copies
 //! of real JetBrains config files in a temp directory. Nothing here touches the
-//! user's actual config — everything is redirected via JBSYNC_CONFIG_HOME.
+//! user's actual config — everything is redirected via IDESYNC_JB_CONFIG_HOME.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn bin() -> &'static str {
-	env!("CARGO_BIN_EXE_jbsync")
+	env!("CARGO_BIN_EXE_idesync")
 }
 
 fn write(path: PathBuf, content: &str) {
@@ -54,7 +54,7 @@ const CONFIG: &str = r#"{
 
 /// Write the config + referenced scheme file into a temp "source" dir.
 fn write_config(dir: &Path) -> PathBuf {
-	let cfg = dir.join("jbsync.json");
+	let cfg = dir.join("idesync.json");
 	write(cfg.clone(), CONFIG);
 	write(dir.join("Verona Dark.icls"), include_str!("fixtures/Verona Dark.icls"));
 	cfg
@@ -63,18 +63,18 @@ fn write_config(dir: &Path) -> PathBuf {
 fn run(base: &Path, args: &[&str]) -> Output {
 	Command::new(bin())
 		.args(args)
-		.env("JBSYNC_CONFIG_HOME", base)
+		.env("IDESYNC_JB_CONFIG_HOME", base)
 		.output()
-		.expect("failed to run jbsync")
+		.expect("failed to run idesync")
 }
 
 fn run_env(base: &Path, extra: &[(&str, &str)], args: &[&str]) -> Output {
 	let mut c = Command::new(bin());
-	c.args(args).env("JBSYNC_CONFIG_HOME", base);
+	c.args(args).env("IDESYNC_JB_CONFIG_HOME", base);
 	for (k, v) in extra {
 		c.env(k, v);
 	}
-	c.output().expect("failed to run jbsync")
+	c.output().expect("failed to run idesync")
 }
 
 fn read(p: PathBuf) -> String {
@@ -96,6 +96,7 @@ fn apply_linux(base: &Path, cfg: &Path) -> Output {
 	run(
 		base,
 		&[
+			"jb",
 			"apply",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -194,6 +195,7 @@ fn exclude_skips_named_sections_in_apply_and_check() {
 	let out = run(
 		&base,
 		&[
+			"jb",
 			"apply",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -221,6 +223,7 @@ fn exclude_skips_named_sections_in_apply_and_check() {
 	let chk = run(
 		&base,
 		&[
+			"jb",
 			"check",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -242,6 +245,7 @@ fn exclude_skips_named_sections_in_apply_and_check() {
 	let bad = run(
 		&base,
 		&[
+			"jb",
 			"check",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -280,6 +284,7 @@ fn mac_keymap_swaps_mod_to_cmd_but_keeps_literal_ctrl() {
 	let out = run(
 		&base,
 		&[
+			"jb",
 			"apply",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -307,6 +312,7 @@ fn check_reports_drift_then_in_sync_after_apply() {
 	let pre = run(
 		&base,
 		&[
+			"jb",
 			"check",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -325,6 +331,7 @@ fn check_reports_drift_then_in_sync_after_apply() {
 	let post = run(
 		&base,
 		&[
+			"jb",
 			"check",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -352,6 +359,7 @@ fn dry_run_writes_nothing() {
 	let out = run(
 		&base,
 		&[
+			"jb",
 			"apply",
 			cfg.to_str().unwrap(),
 			"--product",
@@ -387,7 +395,7 @@ fn vmoptions_with_correct_heap_and_no_trailing_newline_is_idempotent() {
 		cfg.clone(),
 		r#"{ "targets": [{"product":"IntelliJIdea","version":"2026.1"}], "vmOptions": { "heapSizeMb": 2048 } }"#,
 	);
-	let out = run(&base, &["check", cfg.to_str().unwrap(), "--os", "linux"]);
+	let out = run(&base, &["jb", "check", cfg.to_str().unwrap(), "--os", "linux"]);
 	assert_eq!(
 		out.status.code(),
 		Some(0),
@@ -418,7 +426,7 @@ fn per_target_plugins_merge_with_global_at_apply() {
         }"#,
 	);
 
-	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+	assert!(run(&base, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"])
 		.status
 		.success());
 
@@ -444,13 +452,13 @@ fn plugin_install_flow_skips_present_and_is_idempotent() {
 	fs::create_dir_all(&data).unwrap();
 
 	// A fake launcher that mimics `installPlugins` by writing each plugin's
-	// descriptor into the data dir (no network). It reads JBSYNC_DATA_HOME,
-	// which jbsync inherits and passes through to this child process.
+	// descriptor into the data dir (no network). It reads IDESYNC_JB_DATA_HOME,
+	// which idesync inherits and passes through to this child process.
 	let launcher = tmp.path().join("idea-fake.sh");
 	write(
 		launcher.clone(),
 		"#!/usr/bin/env bash\nset -e\n[ \"$1\" = installPlugins ] || exit 2\nshift\n\
-         dir=\"$JBSYNC_DATA_HOME/IntelliJIdea2026.1\"\n\
+         dir=\"$IDESYNC_JB_DATA_HOME/IntelliJIdea2026.1\"\n\
          for id in \"$@\"; do\n  case \"$id\" in http*) continue;; esac\n  \
          mkdir -p \"$dir/$id/META-INF\"\n  \
          printf '<idea-plugin><id>%s</id></idea-plugin>' \"$id\" > \"$dir/$id/META-INF/plugin.xml\"\n\
@@ -474,12 +482,12 @@ fn plugin_install_flow_skips_present_and_is_idempotent() {
 	);
 
 	let extra = [
-		("JBSYNC_DATA_HOME", data.to_str().unwrap()),
-		("JBSYNC_LAUNCHER", launcher.to_str().unwrap()),
+		("IDESYNC_JB_DATA_HOME", data.to_str().unwrap()),
+		("IDESYNC_JB_LAUNCHER", launcher.to_str().unwrap()),
 	];
 
 	// before: only com.foo.bar is missing; the already-present one is skipped
-	let pre = run_env(&base, &extra, &["check", cfg.to_str().unwrap(), "--os", "linux"]);
+	let pre = run_env(&base, &extra, &["jb", "check", cfg.to_str().unwrap(), "--os", "linux"]);
 	assert_eq!(pre.status.code(), Some(1));
 	let pre_out = String::from_utf8_lossy(&pre.stdout);
 	assert!(pre_out.contains("install 1 plugin(s): com.foo.bar"), "got: {pre_out}");
@@ -489,12 +497,12 @@ fn plugin_install_flow_skips_present_and_is_idempotent() {
 	);
 
 	// apply: runs the fake launcher, which installs com.foo.bar
-	let ap = run_env(&base, &extra, &["apply", cfg.to_str().unwrap(), "--os", "linux"]);
+	let ap = run_env(&base, &extra, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"]);
 	assert!(ap.status.success(), "stderr: {}", String::from_utf8_lossy(&ap.stderr));
 	assert!(data.join("IntelliJIdea2026.1/com.foo.bar/META-INF/plugin.xml").exists());
 
 	// after: both present -> in sync (idempotent)
-	let post = run_env(&base, &extra, &["check", cfg.to_str().unwrap(), "--os", "linux"]);
+	let post = run_env(&base, &extra, &["jb", "check", cfg.to_str().unwrap(), "--os", "linux"]);
 	assert_eq!(
 		post.status.code(),
 		Some(0),
@@ -516,13 +524,13 @@ fn missing_launcher_errors_clearly_on_apply() {
 		cfg.clone(),
 		r#"{ "targets":[{"product":"IntelliJIdea","version":"2026.1"}], "plugins": { "install": ["com.foo.bar"] } }"#,
 	);
-	// JBSYNC_LAUNCHER points nowhere, PATH search won't find "idea"
+	// IDESYNC_JB_LAUNCHER points nowhere, PATH search won't find "idea"
 	let extra = [
-		("JBSYNC_DATA_HOME", data.to_str().unwrap()),
-		("JBSYNC_LAUNCHER", "/nonexistent/idea"),
+		("IDESYNC_JB_DATA_HOME", data.to_str().unwrap()),
+		("IDESYNC_JB_LAUNCHER", "/nonexistent/idea"),
 		("PATH", "/nonexistent"),
 	];
-	let out = run_env(&base, &extra, &["apply", cfg.to_str().unwrap(), "--os", "linux"]);
+	let out = run_env(&base, &extra, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"]);
 	assert!(!out.status.success());
 	assert!(String::from_utf8_lossy(&out.stderr).contains("cannot find the IDE launcher"));
 }
@@ -531,7 +539,7 @@ fn missing_launcher_errors_clearly_on_apply() {
 fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	// Two IDEs share a scheme named "ABC" with different language attributes.
 	let tmp = tempfile::tempdir().unwrap();
-	let base = tmp.path().join("JetBrains"); // JBSYNC_CONFIG_HOME
+	let base = tmp.path().join("JetBrains"); // IDESYNC_JB_CONFIG_HOME
 	let data = tmp.path().join("data");
 	fs::create_dir_all(&data).unwrap();
 
@@ -558,8 +566,8 @@ fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
-		&["create", "--out", out.to_str().unwrap(), "--primary", "WebStorm"],
+		&[("IDESYNC_JB_DATA_HOME", data.to_str().unwrap())],
+		&["jb", "create", "--out", out.to_str().unwrap(), "--primary", "WebStorm"],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
 
@@ -578,12 +586,12 @@ fn create_snapshots_settings_and_merges_schemes_across_ides() {
 	assert!(!merged.contains(r#"value="ffffff""#));
 
 	// The config snapshots both targets, the font, and the active scheme reference.
-	let cfg = read(out.join("jbsync.json"));
+	let cfg = read(out.join("idesync.json"));
 	assert!(cfg.contains(r#""product": "WebStorm""#));
 	assert!(cfg.contains(r#""product": "RustRover""#));
 	assert!(cfg.contains(r#""name": "ABC""#));
 	assert!(cfg.contains(r#""file": "color-schemes/ABC.icls""#));
-	assert!(out.join("jbsync.schema.json").exists());
+	assert!(out.join("idesync-jetbrains.schema.json").exists());
 }
 
 #[test]
@@ -604,7 +612,7 @@ fn apply_writes_registry_settings_to_right_files() {
           }
         }"#,
 	);
-	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+	assert!(run(&base, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"])
 		.status
 		.success());
 	let ide = base.join("IntelliJIdea2026.1");
@@ -620,7 +628,7 @@ fn apply_writes_registry_settings_to_right_files() {
 		bad.clone(),
 		r#"{ "targets": [{ "product": "IntelliJIdea", "version": "2026.1" }], "settings": { "nope.bad": true } }"#,
 	);
-	let out = run(&base, &["apply", bad.to_str().unwrap(), "--os", "linux"]);
+	let out = run(&base, &["jb", "apply", bad.to_str().unwrap(), "--os", "linux"]);
 	assert!(!out.status.success());
 	assert!(String::from_utf8_lossy(&out.stderr).contains("unknown setting key 'nope.bad'"));
 }
@@ -642,7 +650,10 @@ fn editor_behavior_and_settings_compose_on_editor_xml() {
         }"#,
 	);
 	// editor.xml must appear exactly ONCE in the plan (composed, not duplicated).
-	let dry = run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux", "--dry-run"]);
+	let dry = run(
+		&base,
+		&["jb", "apply", cfg.to_str().unwrap(), "--os", "linux", "--dry-run"],
+	);
 	let out = String::from_utf8_lossy(&dry.stdout);
 	assert_eq!(
 		out.matches("── options/editor.xml").count(),
@@ -650,7 +661,7 @@ fn editor_behavior_and_settings_compose_on_editor_xml() {
 		"editor.xml listed once: {out}"
 	);
 
-	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+	assert!(run(&base, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"])
 		.status
 		.success());
 	let editor = read(base.join("IntelliJIdea2026.1/options/editor.xml"));
@@ -685,13 +696,13 @@ fn apply_copies_managed_files_verbatim() {
 		"<application>\n  <component name=\"x\" />\n</application>",
 	);
 	write(dot.join("templates/React.xml"), "<templateSet group=\"React\" />");
-	let cfg = dot.join("jbsync.json");
+	let cfg = dot.join("idesync.json");
 	write(
 		cfg.clone(),
 		r#"{ "targets": [{ "product": "IntelliJIdea", "version": "2026.1" }],
             "files": ["options/customization.xml", "templates"] }"#,
 	);
-	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+	assert!(run(&base, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"])
 		.status
 		.success());
 	let ide = base.join("IntelliJIdea2026.1");
@@ -713,7 +724,7 @@ fn apply_copies_per_target_files_to_each_ide_only() {
 	let dot = tmp.path().join("dot");
 	write(dot.join("targets/IntelliJIdea/options/window.layouts.xml"), "IJ-LAYOUT");
 	write(dot.join("targets/WebStorm/options/window.layouts.xml"), "WS-LAYOUT");
-	let cfg = dot.join("jbsync.json");
+	let cfg = dot.join("idesync.json");
 	write(
 		cfg.clone(),
 		r#"{ "targets": [
@@ -721,7 +732,7 @@ fn apply_copies_per_target_files_to_each_ide_only() {
             { "product": "WebStorm", "version": "2026.1", "files": ["options/window.layouts.xml"] }
         ] }"#,
 	);
-	assert!(run(&base, &["apply", cfg.to_str().unwrap(), "--os", "linux"])
+	assert!(run(&base, &["jb", "apply", cfg.to_str().unwrap(), "--os", "linux"])
 		.status
 		.success());
 	// each IDE gets ITS OWN layout, not the other's
@@ -769,12 +780,12 @@ fn create_captures_settings_theme_and_managed_files() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
-		&["create", "--out", out.to_str().unwrap()],
+		&[("IDESYNC_JB_DATA_HOME", data.to_str().unwrap())],
+		&["jb", "create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
 
-	let cfg = read(out.join("jbsync.json"));
+	let cfg = read(out.join("idesync.json"));
 	assert!(cfg.contains(r#""editor.codeVision": false"#), "settings: {cfg}");
 	assert!(cfg.contains(r#""theme": "ExperimentalDark""#), "theme: {cfg}");
 	assert!(cfg.contains(r#""options/customization.xml""#), "files: {cfg}");
@@ -818,8 +829,8 @@ fn create_skips_empty_user_override_schemes() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
-		&["create", "--out", out.to_str().unwrap()],
+		&[("IDESYNC_JB_DATA_HOME", data.to_str().unwrap())],
+		&["jb", "create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
 
@@ -855,15 +866,15 @@ fn create_skips_bundled_only_template_groups() {
 	let out = tmp.path().join("out");
 	let res = run_env(
 		&base,
-		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
-		&["create", "--out", out.to_str().unwrap()],
+		&[("IDESYNC_JB_DATA_HOME", data.to_str().unwrap())],
+		&["jb", "create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
 
 	// Only the custom group is copied; the all-disabled one is skipped.
 	assert!(out.join("templates/Custom.xml").exists());
 	assert!(!out.join("templates/Disabled.xml").exists());
-	assert!(read(out.join("jbsync.json")).contains(r#""templates""#));
+	assert!(read(out.join("idesync.json")).contains(r#""templates""#));
 }
 
 #[test]
@@ -875,7 +886,7 @@ fn create_requires_primary_when_multiple_ides() {
 	let out = tmp.path().join("out");
 
 	// No --primary with two IDEs -> error that names --primary and the options.
-	let res = run(&base, &["create", "--out", out.to_str().unwrap()]);
+	let res = run(&base, &["jb", "create", "--out", out.to_str().unwrap()]);
 	assert!(!res.status.success());
 	let err = String::from_utf8_lossy(&res.stderr);
 	assert!(err.contains("--primary"), "stderr: {err}");
@@ -884,7 +895,7 @@ fn create_requires_primary_when_multiple_ides() {
 	// A bogus --primary is rejected too.
 	let bad = run(
 		&base,
-		&["create", "--out", out.to_str().unwrap(), "--primary", "GoLand"],
+		&["jb", "create", "--out", out.to_str().unwrap(), "--primary", "GoLand"],
 	);
 	assert!(!bad.status.success());
 	assert!(String::from_utf8_lossy(&bad.stderr).contains("not among the IDEs"));
@@ -902,11 +913,11 @@ fn create_allows_no_primary_for_single_ide() {
 	let data = tmp.path().join("data");
 	let res = run_env(
 		&base,
-		&[("JBSYNC_DATA_HOME", data.to_str().unwrap())],
-		&["create", "--out", out.to_str().unwrap()],
+		&[("IDESYNC_JB_DATA_HOME", data.to_str().unwrap())],
+		&["jb", "create", "--out", out.to_str().unwrap()],
 	);
 	assert!(res.status.success(), "stderr: {}", String::from_utf8_lossy(&res.stderr));
-	assert!(out.join("jbsync.json").exists());
+	assert!(out.join("idesync.json").exists());
 }
 
 #[test]
@@ -918,7 +929,7 @@ fn list_discovers_android_studio_under_google_vendor() {
 	write(jb.join("IntelliJIdea2026.1/options/.keep"), "");
 	write(tmp.path().join("Google/AndroidStudio2026.1.1/options/.keep"), "");
 
-	let out = run(&jb, &["list"]); // JBSYNC_CONFIG_HOME = the JetBrains dir
+	let out = run(&jb, &["list"]); // IDESYNC_JB_CONFIG_HOME = the JetBrains dir
 	assert!(out.status.success());
 	let s = String::from_utf8_lossy(&out.stdout);
 	assert!(s.contains("IntelliJIdea2026.1"), "got: {s}");
@@ -939,7 +950,13 @@ fn keymap_command_generates_all_three_os_variants() {
 	let out_dir = tmp.path().join("generated");
 	let out = run(
 		&tmp.path().join("nonexistent-base"),
-		&["keymap", cfg.to_str().unwrap(), "--out", out_dir.to_str().unwrap()],
+		&[
+			"jb",
+			"keymap",
+			cfg.to_str().unwrap(),
+			"--out",
+			out_dir.to_str().unwrap(),
+		],
 	);
 	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
 	assert!(out_dir.join("keymaps/Verona _Linux_.xml").exists());

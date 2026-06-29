@@ -1,20 +1,20 @@
-//! `create`: snapshot the current IDE settings into a portable jbsync config
+//! `create`: snapshot the current IDE settings into a portable idesync config
 //! plus copied/merged scheme files. The reverse of `apply` — and strictly
 //! read-only with respect to the IDEs (it only writes into the output dir).
 
 use crate::appliers::plugins::installed_ids;
 use crate::config::*;
 use crate::discovery;
-use crate::platform::Os;
 use crate::scheme_merge;
 use crate::xmlpatch::{get_attr, get_option};
 use anyhow::{anyhow, bail, Context, Result};
+use idesync_core::Os;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::reader::Reader;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_JSON: &str = include_str!("../schema/jbsync.schema.json");
+const SCHEMA_JSON: &str = include_str!("../schema/idesync-jetbrains.schema.json");
 
 pub struct CreateOptions {
 	pub out_dir: PathBuf,
@@ -36,7 +36,7 @@ struct Ide {
 pub fn create(opts: &CreateOptions) -> Result<()> {
 	let mut ides = select_ides(&opts.products)?;
 	if ides.is_empty() {
-		bail!("no IDEs found to snapshot");
+		bail!("no JetBrains IDEs found to snapshot");
 	}
 	// The primary IDE provides all single-valued settings (fonts, toggles, active
 	// scheme/style, heap, keymap) and wins conflicts in the cross-IDE scheme
@@ -74,9 +74,9 @@ pub fn create(opts: &CreateOptions) -> Result<()> {
 
 	// Write the config + a copy of the schema for editor autocomplete.
 	let json = serde_json::to_string_pretty(&cfg)? + "\n";
-	let cfg_path = opts.out_dir.join("jbsync.json");
+	let cfg_path = opts.out_dir.join("idesync.json");
 	std::fs::write(&cfg_path, json).with_context(|| format!("writing {}", cfg_path.display()))?;
-	std::fs::write(opts.out_dir.join("jbsync.schema.json"), SCHEMA_JSON)?;
+	std::fs::write(opts.out_dir.join("idesync-jetbrains.schema.json"), SCHEMA_JSON)?;
 
 	println!("wrote {}", cfg_path.display());
 	println!(
@@ -386,7 +386,7 @@ fn build_config(
 	let keymap = extract_keymap(dir, &primary.product, portable_keymap);
 
 	Ok(Config {
-		schema: Some("./jbsync.schema.json".to_string()),
+		schema: Some("./idesync-jetbrains.schema.json".to_string()),
 		// Plugins are emitted PER TARGET (each IDE has its own disabled/installed
 		// set), so there is no global plugins block to over-disable.
 		targets: ides.iter().map(extract_target_plugins).collect(),
@@ -623,7 +623,7 @@ fn extract_keymap(dir: &Path, product: &str, portable: bool) -> Option<KeymapCfg
 			}
 			None => eprintln!(
 				"  warning: --portable-keymap could not locate {product}'s default-keymap jar (set \
-				 JBSYNC_LAUNCHER to the IDE launcher). Only your *explicit* keymap overrides were captured; \
+				 IDESYNC_JB_LAUNCHER to the IDE launcher). Only your *explicit* keymap overrides were captured; \
 				 inherited defaults like Ctrl+F will NOT be ported to Cmd on macOS."
 			),
 		}

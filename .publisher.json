@@ -2,12 +2,13 @@
 	"$schema": "https://raw.githubusercontent.com/Skiley/rust-binary-publish/v3.0.0/schema/publisher.schema.json",
 	"input": {
 		"type": "rust-binaries",
-		"binary-name": "jbsync"
+		"binary-name": "idesync",
+		"env-prefix": "IDESYNC"
 	},
 	"outputs": [
 		{
 			"type": "github-release",
-			"extra-assets": "schema/jbsync.schema.json"
+			"extra-assets": "crates/jetbrains/schema/idesync-jetbrains.schema.json\ncrates/vscode/schema/idesync-vscode.schema.json"
 		}
 	]
 }

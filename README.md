@@ -1,16 +1,30 @@
-# jbsync
+# idesync
 
-Declaratively apply JetBrains IDE settings from **one JSON config**, the same
-way on every OS. Built to replace JetBrains "Settings Sync" / "Backup and Sync"
-with a single source of truth you keep in Git.
+Declaratively apply IDE/editor settings from **per-editor JSON configs**, the
+same way on every OS. **Pluggable** editor support — JetBrains and VSCode today —
+built to replace each editor's built-in settings sync with a single source of
+truth you keep in Git.
+
+Each editor family is a plugin with its own CLI namespace, config format, and
+`create`/`apply`/`check` flow:
+
+```bash
+idesync list                 # discover installed editors/IDEs (every family)
+idesync jb  apply config.json     # JetBrains (IntelliJ, RustRover, … incl. Android Studio)
+idesync vsc apply config.json     # VSCode family (VS Code, Insiders, VSCodium, Cursor, Windsurf)
+```
+
+Adding a new editor is a new crate implementing one `Editor` trait — see
+[CLAUDE.md](CLAUDE.md).
 
 ## Why
 
-JetBrains Settings Sync is a cloud, last-writer-wins model with several
-independent writers (each IDE on each machine). When machines diverge there is
-no real merge — one snapshot wins, and per-OS artifacts like macOS keymaps get
-dropped or overwritten. `jbsync` instead makes a JSON file the **single source
-of truth** and the IDEs **read-only consumers**:
+Most editors' built-in sync (JetBrains Settings Sync, VS Code Settings Sync) is a
+cloud, last-writer-wins model with several independent writers (each editor on
+each machine). When machines diverge there is no real merge — one snapshot wins,
+and per-OS artifacts like macOS keymaps get dropped or overwritten. `idesync`
+instead makes JSON files the **single source of truth** and the editors
+**read-only consumers**:
 
 - One writer → no silent overwrites between machines.
 - Reviewable diffs in version control.
@@ -18,6 +32,8 @@ of truth** and the IDEs **read-only consumers**:
   drift or get lost independently.
 
 ## How it works
+
+**The JetBrains plugin (`jb`):**
 
 - `options/*.xml` toggles are **surgically patched** — only the bytes that
   change are rewritten; comments, whitespace, and unmodeled settings are
@@ -37,34 +53,40 @@ of truth** and the IDEs **read-only consumers**:
   notifications, parameter hints, file types, VCS/debugger/diff, advanced
   settings) — the catch-all for anything not worth a typed key.
 
+**The VSCode plugin (`vsc`):** pure pass-through for VS Code, Insiders, VSCodium,
+Cursor, and Windsurf — `settings.json` is **surgically merged** (comments +
+unmanaged keys preserved), `keybindings.json` is owned like a generated keymap,
+and extensions are ensure-installed via the editor CLI. See
+[VSCode-family editors](#vscode-family-editors-vsc).
+
 ## Install
 
 ### Released binary (Linux / macOS / Windows)
 
 ```bash
 # Linux / macOS
-curl -fsSL https://github.com/JoaaoVerona/jbsync/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/JoaaoVerona/idesync/releases/latest/download/install.sh | sh
 
 # Windows (PowerShell)
-iwr https://github.com/JoaaoVerona/jbsync/releases/latest/download/install.ps1 | iex
+iwr https://github.com/JoaaoVerona/idesync/releases/latest/download/install.ps1 | iex
 ```
 
-Installs the `jbsync` binary to `~/.local/bin` (override with
-`JBSYNC_INSTALL_DIR`); add that directory to your `PATH` if it isn't already.
+Installs the `idesync` binary to `~/.local/bin` (override with
+`IDESYNC_INSTALL_DIR`); add that directory to your `PATH` if it isn't already.
 Pin a version by passing a tag, e.g.
 `curl -fsSL …/install.sh | sh -s v0.1.0`.
 
 ### With Cargo
 
 ```bash
-cargo install --git https://github.com/JoaaoVerona/jbsync   # latest from main
-cargo install --path .                                  # from a local checkout
+cargo install --git https://github.com/JoaaoVerona/idesync idesync   # latest from main
+cargo install --path crates/idesync                                  # from a local checkout
 ```
 
 ### From source
 
 ```bash
-cargo build --release   # binary at target/release/jbsync
+cargo build --release   # binary at target/release/idesync
 ```
 
 This repo ships a [Runfile](Runfile.json) — `run build`, `run test`,
@@ -74,35 +96,46 @@ task runner installed.
 
 ## Usage
 
+`idesync list` is global; every other command lives under an editor namespace
+(`jb` for JetBrains, `vsc` for VSCode). Each takes its **own** config file.
+
 ```bash
-jbsync list                       # discover installed JetBrains IDEs
-jbsync create --out ./dotfiles    # snapshot current IDE settings -> portable config
-jbsync check  config.json         # report drift (exit 1 if any), changes nothing
-jbsync apply  config.json --dry-run   # show exact diffs, write nothing
-jbsync apply  config.json         # apply (backs up overwritten files)
-jbsync keymap config.json --out . # generate per-OS keymaps to ./keymaps/
+idesync list                          # discover installed editors/IDEs (every family)
+
+# JetBrains (jb)
+idesync jb create --out ./dotfiles    # snapshot current IDE settings -> portable config
+idesync jb check  jb.json             # report drift (exit 1 if any), changes nothing
+idesync jb apply  jb.json --dry-run   # show exact diffs, write nothing
+idesync jb apply  jb.json             # apply (backs up overwritten files)
+idesync jb keymap jb.json --out .     # generate per-OS keymaps to ./keymaps/
+
+# VSCode (vsc)
+idesync vsc create --out ./vscode     # snapshot settings/keybindings/extensions
+idesync vsc check  vsc.json           # report drift
+idesync vsc apply  vsc.json           # apply
 ```
 
-Useful flags on `apply`/`check`: `--product`, `--version`, `--os`
+Useful flags on `jb apply`/`jb check`: `--product`, `--version`, `--os`
 (`linux|macos|windows`, default: host), and `--exclude <section>` (repeatable)
 to skip a config section entirely — it is neither applied nor reported as drift.
 Sections mirror the config keys: `editor`, `terminal`, `console`, `ui`,
 `editor-behavior`, `settings`, `color-scheme`, `code-style`, `keymap`, `files`,
 `plugins`, `vm-options` (e.g. `--exclude plugins --exclude keymap`). `apply` also
-takes `--no-backup`.
+takes `--no-backup`. `vsc apply`/`vsc check` take `--product <editor>` (e.g.
+`Code`, `Cursor`) and `--targets-only`.
 
-> ⚠ The IDE rewrites its config on exit and reads it on startup — **close the
-> target IDE before `apply`**, or it will clobber the changes.
+> ⚠ The editor rewrites its config on exit and reads it on startup — **close the
+> target editor before `apply`**, or it will clobber the changes.
 
 ### Snapshotting current settings (`create`)
 
-`jbsync create --out DIR` is the reverse of `apply`: it reads your installed
+`idesync jb create --out DIR` is the reverse of `apply`: it reads your installed
 IDEs and writes a portable, self-contained config you can commit:
 
-- `DIR/jbsync.json` — extracted fonts, UI/editor toggles, registry settings,
+- `DIR/idesync.json` — extracted fonts, UI/editor toggles, registry settings,
   active scheme + code style, per-target plugins, vmoptions heap, and the active
   keymap reversed into bindings.
-- `DIR/jbsync.schema.json` — a copy of the schema (for editor autocomplete).
+- `DIR/idesync-jetbrains.schema.json` — a copy of the schema (for editor autocomplete).
 - `DIR/color-schemes/*.icls` and `DIR/code-styles/*.xml` — the scheme files
   themselves, **merged across IDEs**.
 - `DIR/templates/…`, `DIR/fileTemplates/…`, `DIR/inspectionProfiles/…` — shared
@@ -110,7 +143,7 @@ IDEs and writes a portable, self-contained config you can commit:
 - `DIR/targets/<product>/options/…` — IDE-specific `options/*.xml` (menus, file
   types, window layouts, …), one copy per IDE, applied to that IDE only.
 
-Everything but `jbsync.json` / `jbsync.schema.json` is organised into
+Everything but `idesync.json` / `idesync-jetbrains.schema.json` is organised into
 subdirectories. `create` is strictly read-only with respect to your IDEs — it
 only writes into `DIR`.
 
@@ -142,9 +175,9 @@ scheme/style, heap, keymap) and breaks scheme-merge conflicts. It has **no
 default** — when more than one IDE is found you must choose it with `--primary`:
 
 ```bash
-jbsync create --out ./dotfiles --primary IntelliJIdea  # all IDEs, IntelliJ leads
-jbsync create --out ./dotfiles --product WebStorm      # just one (no --primary needed)
-jbsync create --out ./dotfiles --primary IntelliJIdea --portable-keymap
+idesync jb create --out ./dotfiles --primary IntelliJIdea  # all IDEs, IntelliJ leads
+idesync jb create --out ./dotfiles --product WebStorm      # just one (no --primary needed)
+idesync jb create --out ./dotfiles --primary IntelliJIdea --portable-keymap
 ```
 
 `--portable-keymap` emits the host's primary keyboard modifier as **`mod`**
@@ -154,14 +187,14 @@ non-primary modifiers stay literal. Without the flag, shortcuts are captured
 verbatim (e.g. `ctrl+1` stays Ctrl on every OS).
 
 Notes / limits: scalar settings (fonts, toggles, active scheme name, heap) come
-from the **primary** IDE (a single jbsync config can't express per-IDE scalar
+from the **primary** IDE (a single idesync config can't express per-IDE scalar
 differences). **Plugins are emitted per-target** — each IDE keeps its own
 `disabled`/`install` set, so applying never over-disables.
 
 ### Plugin installation
 
 `plugins.install` lists Marketplace plugin IDs to ensure present. On `apply`,
-jbsync scans the installed-plugins dir (the data dir) to see what's already
+idesync scans the installed-plugins dir (the data dir) to see what's already
 there and runs the IDE's `installPlugins` CLI only for the missing ones:
 
 ```jsonc
@@ -193,10 +226,10 @@ to that IDE only, never shared. See [Flat settings & managed files](#flat-settin
 Caveats specific to installs (they're the one networked, imperative step):
 
 - Needs the **IDE launcher** — found via PATH, the Toolbox `scripts/` dir, or
-  the `JBSYNC_LAUNCHER` override. Close the IDE first; `installPlugins` runs it
+  the `IDESYNC_JB_LAUNCHER` override. Close the IDE first; `installPlugins` runs it
   headless and downloads from Marketplace.
 - **Install-only**: the CLI can't uninstall/disable. Use `plugins.disabled` to
-  disable; jbsync does not remove plugins.
+  disable; idesync does not remove plugins.
 - Versions aren't pinnable via this CLI — it installs the latest compatible
   build, so installs are less deterministic than the file patching.
 
@@ -232,7 +265,7 @@ Beyond the typed sections, two general mechanisms cover the long tail:
 ```
 
 - **`settings`** keys are validated against a fixed registry (see
-  [`settings.rs`](src/settings.rs) / the schema's `settings` block); an unknown
+  [`settings.rs`](crates/jetbrains/src/settings.rs) / the schema's `settings` block); an unknown
   key is an error. Both `apply` and `create` are driven by that one table.
 - **`files`** entries are config-relative paths (a directory is copied
   recursively) installed verbatim into **every** IDE. Don't list files that other
@@ -266,21 +299,31 @@ The JetBrains config base is resolved per-OS (`~/.config/JetBrains`,
 installed-plugins base is the data dir (`~/.local/share/JetBrains`, …).
 **Android Studio** is a Google product, so it lives under the sibling `Google`
 vendor dir (`~/.config/Google/AndroidStudio*`) — discovery handles this
-automatically. Override the JetBrains base with `JBSYNC_CONFIG_HOME`,
-`JBSYNC_DATA_HOME`, and `JBSYNC_LAUNCHER` (used by the tests and handy for
+automatically. Override the JetBrains base with `IDESYNC_JB_CONFIG_HOME`,
+`IDESYNC_JB_DATA_HOME`, and `IDESYNC_JB_LAUNCHER` (used by the tests and handy for
 dry-running against a copy); the Google base is derived as its sibling.
 
-## Config
+**VSCode** editors are resolved under the same per-OS config base
+(`~/.config/<AppDir>`, `~/Library/Application Support/<AppDir>`,
+`%APPDATA%\<AppDir>`, where `<AppDir>` is `Code`, `Cursor`, …). Override the base
+with `IDESYNC_VSC_CONFIG_HOME` and the home dir used to find each editor's
+`extensions/` with `IDESYNC_VSC_HOME`.
 
-See [`schema/jbsync.schema.json`](schema/jbsync.schema.json) for the full,
-auto-completing schema (the sections below cover every field). Reference the
-schema from your config for editor support:
+## Config (JetBrains)
+
+Each editor has its own schema:
+[`idesync-jetbrains.schema.json`](crates/jetbrains/schema/idesync-jetbrains.schema.json)
+and [`idesync-vscode.schema.json`](crates/vscode/schema/idesync-vscode.schema.json).
+The JetBrains sections below cover every `jb` field; the VSCode config is
+described under [VSCode-family editors](#vscode-family-editors-vsc). `create`
+copies the matching schema next to the config it writes, so reference it for
+editor autocomplete:
 
 ```json
-{ "$schema": "./schema/jbsync.schema.json", "...": "..." }
+{ "$schema": "./idesync-jetbrains.schema.json", "...": "..." }
 ```
 
-The quickest way to a real config is `jbsync create --out ./dotfiles`, which
+The quickest way to a real config is `idesync jb create --out ./dotfiles`, which
 writes a complete one snapshotted from your own IDEs.
 
 ### Keymaps & the Ctrl/Cmd model
@@ -312,12 +355,76 @@ can have both (e.g. `["alt+enter", "button1+doubleClick"]`).
 }
 ```
 
+### VSCode-family editors (`vsc`)
+
+`idesync vsc …` syncs **VSCode-family editors** — VS Code, VS Code Insiders,
+VSCodium, Cursor, and Windsurf (anything that reuses the VSCode config layout).
+Because these share none of JetBrains' formats or vocabulary (settings keys,
+command IDs), this is **pass-through, not translated**: a standalone VSCode config
+provides raw VSCode values that idesync applies to every targeted editor.
+
+```jsonc
+// vsc.json — its own file, separate from the JetBrains config
+{
+  "$schema": "./idesync-vscode.schema.json",
+
+  // Empty/omitted `targets` = apply to every discovered VSCode-family editor.
+  "targets": ["Code", "Cursor"],
+
+  // Merged into settings.json. Only THESE keys are (re)written — every other
+  // key, plus your comments and formatting, is preserved.
+  "settings": {
+    "editor.fontSize": 15,
+    "editor.fontFamily": "JetBrains Mono",
+    "editor.fontLigatures": true,
+    "workbench.colorTheme": "Default Dark Modern"
+  },
+
+  // The keybindings.json array. When present, idesync OWNS keybindings.json
+  // (like a generated keymap) — seed it from your current bindings with `create`.
+  // `mod` = the platform-primary modifier (Ctrl on Linux/Windows, Cmd on macOS).
+  "keybindings": [
+    { "key": "mod+d", "command": "editor.action.addSelectionToNextFindMatch" },
+    { "key": "ctrl+shift+k", "command": "editor.action.deleteLines" }
+  ],
+
+  // Ensure-installed via the editor CLI (`code --install-extension …`); only
+  // the missing ones are installed, so `apply` stays idempotent.
+  "extensions": { "install": ["rust-lang.rust-analyzer", "esbenp.prettier-vscode"] }
+}
+```
+
+How it differs from the JetBrains side:
+
+- **`settings.json` is merged surgically** (the JSON counterpart of the XML
+  patcher) — listed keys are set, everything else is left byte-for-byte intact.
+- **`keybindings.json` is owned wholesale** — it holds only your bindings, so
+  idesync regenerates it from `keybindings` the way `jb` generates a keymap.
+- **The `mod` token** is the cross-platform Ctrl/Cmd convenience. VSCode keeps a
+  single `keybindings.json` and uses native per-platform overrides (`mac`/`linux`/
+  `win`) instead of per-OS files — so it has no "generate N files" problem — but
+  it won't derive Cmd from Ctrl for *custom* bindings. idesync bridges that:
+  `"key": "mod+d"` is **expanded on apply** to `"key": "ctrl+d"` + `"mac": "cmd+d"`
+  (an explicit `mac` you write is always respected). `ctrl` stays literal Control
+  everywhere. This mirrors the JetBrains `mod` token.
+- **Extensions** are detected from the editor's `extensions.json` manifest and
+  the missing IDs installed via the editor's CLI (looked up on `PATH`).
+- It's a **separate config + crate** from JetBrains; nothing is shared or
+  translated between the two.
+
+`idesync vsc create --out DIR` snapshots your installed VSCode editors into
+`DIR/idesync.json` (and `idesync list` shows which editors were discovered).
+`--product Code` targets just that editor; `--portable-keymap` folds captured
+`ctrl` keys with a matching `cmd` macOS override back into the `mod` token.
+
 ## Recommended workflow
 
-1. Turn **off** JetBrains Settings Sync (otherwise you have two writers again).
-2. Keep `config.json` (+ any `.icls`/code-style files) in a dotfiles Git repo.
-3. `jbsync check` in CI / a pre-commit hook to catch drift.
-4. `jbsync apply` on each machine after pulling.
+1. Turn **off** each editor's built-in sync (JetBrains Settings Sync, VS Code
+   Settings Sync) — otherwise you have two writers again.
+2. Keep your `jb.json` / `vsc.json` (+ any `.icls`/code-style files) in a dotfiles
+   Git repo.
+3. `idesync jb check` / `idesync vsc check` in CI / a pre-commit hook to catch drift.
+4. `idesync jb apply` / `idesync vsc apply` on each machine after pulling.
 
 ## Scope (prototype)
 
@@ -328,13 +435,21 @@ per-OS keymap generation. Deliberately **not** modeled: plugin _uninstall_ (the
 CLI can't), and every obscure `options/*.xml` flag — the philosophy is to
 JSON-model only stable scalars and treat big artifacts as managed files.
 
+**VSCode** support is deliberately pass-through: idesync syncs your raw
+`settings.json` / `keybindings.json` / extension list across editors and
+machines, but does **not** translate JetBrains keymaps or settings into VSCode
+equivalents (the action/command vocabularies don't map cleanly). Extension
+_uninstall_ is likewise out of scope.
+
 ## Tests
 
 ```bash
-cargo test
+cargo test          # or: run test  (whole workspace)
 ```
 
-Unit tests cover the XML patcher and keymap transform; integration tests drive
-the real compiled binary against seeded copies of real JetBrains files in a temp
-dir (surgical patching, idempotency, drift detection, dry-run safety, the
-Ctrl/Cmd transform, scheme install, plugin merge, vmoptions).
+Unit tests cover the XML patcher, the JSONC patcher, and the keymap transform;
+integration tests drive the real compiled binary against seeded editor configs in
+a temp dir, redirected via the `IDESYNC_JB_*` / `IDESYNC_VSC_*` env overrides
+(surgical patching, idempotency, drift detection, dry-run safety, the Ctrl/Cmd
+transform, scheme install, plugin merge, vmoptions; VSCode settings merge,
+owned keybindings, and capture).

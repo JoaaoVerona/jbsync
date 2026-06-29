@@ -9,8 +9,9 @@
 //! and only install the IDs that are missing — keeping `apply` idempotent.
 
 use super::{whole_file, Ctx};
-use crate::plan::{FileChange, PluginInstall};
+use crate::plan::PluginInstall;
 use anyhow::Result;
+use idesync_core::FileChange;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::BTreeSet;
