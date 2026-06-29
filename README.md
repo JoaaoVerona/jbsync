@@ -127,6 +127,24 @@ takes `--no-backup`. `vsc apply`/`vsc check` take `--product <editor>` (e.g.
 > ⚠ The editor rewrites its config on exit and reads it on startup — **close the
 > target editor before `apply`**, or it will clobber the changes.
 
+### Interactive mode
+
+Run `apply`, `check`, or `create` (and `jb keymap`) **without their required
+inputs** on a terminal and idesync drops into an interactive wizard that prompts
+for everything — a text field for the config path / output directory, a menu to
+pick the product/editor and target OS, and a multi-select for which sections to
+exclude or which products to capture:
+
+```bash
+idesync jb apply           # prompts: config path, product, OS, exclude…, flags
+idesync vsc create         # prompts: out dir, editors to snapshot, portable-keymap
+idesync jb create -i       # -i / --interactive forces the wizard even with args
+```
+
+Anything you pass on the command line pre-fills its prompt as the default. The
+wizard only runs on a real terminal — off a TTY (pipes, CI) a missing required
+input is a normal error, so scripts never hang.
+
 ### Snapshotting current settings (`create`)
 
 `idesync jb create --out DIR` is the reverse of `apply`: it reads your installed

@@ -8,6 +8,7 @@
 pub mod change;
 pub mod editor;
 pub mod platform;
+pub mod prompt;
 pub mod runner;
 
 pub use change::FileChange;

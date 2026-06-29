@@ -189,3 +189,16 @@ fn create_portable_keymap_collapses_ctrl_cmd_into_mod() {
 	assert!(captured.contains(r#""mod+d""#), "collapsed to mod: {captured}");
 	assert!(!captured.contains("cmd+d"), "mac override folded away: {captured}");
 }
+
+/// Off a TTY (output is captured), `vsc apply` with no config errors instead of
+/// hanging on the interactive prompt.
+#[test]
+fn apply_without_config_off_tty_errors_not_hangs() {
+	let out = vsc(&[], &["apply"]);
+	assert!(!out.status.success(), "missing config off a TTY must error");
+	assert!(
+		String::from_utf8_lossy(&out.stderr).contains("config path required"),
+		"stderr: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+}

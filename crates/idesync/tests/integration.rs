@@ -963,3 +963,32 @@ fn keymap_command_generates_all_three_os_variants() {
 	assert!(out_dir.join("keymaps/Verona _macOS_.xml").exists());
 	assert!(out_dir.join("keymaps/Verona _Windows_.xml").exists());
 }
+
+// --- interactive mode guards -------------------------------------------------
+// `Command::output()` captures stdout, so it is never a TTY → the interactive
+// wizard never triggers here; these assert the off-terminal fallbacks instead of
+// hanging on a prompt.
+
+#[test]
+fn apply_without_config_off_tty_errors_not_hangs() {
+	let (_tmp, base, _cfg) = setup();
+	let out = run(&base, &["jb", "apply"]);
+	assert!(!out.status.success(), "missing config off a TTY must error");
+	assert!(
+		String::from_utf8_lossy(&out.stderr).contains("config path required"),
+		"stderr: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+}
+
+#[test]
+fn interactive_flag_off_tty_errors_clearly() {
+	let (_tmp, base, _cfg) = setup();
+	let out = run(&base, &["jb", "apply", "--interactive"]);
+	assert!(!out.status.success(), "-i off a TTY must error, not hang");
+	assert!(
+		String::from_utf8_lossy(&out.stderr).contains("requires a terminal"),
+		"stderr: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+}

@@ -7,9 +7,9 @@ use crate::config::{Config, PluginsCfg, Target};
 use crate::discovery;
 use crate::plan::PluginInstall;
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{ArgMatches, Args, FromArgMatches, Subcommand};
+use clap::{ArgMatches, Args, FromArgMatches, Subcommand, ValueEnum};
 use idesync_core::runner::{print_diff, write_change};
-use idesync_core::Os;
+use idesync_core::{prompt, Os};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -47,8 +47,8 @@ pub fn dispatch(matches: &ArgMatches) -> Result<i32> {
 
 #[derive(Args)]
 struct ApplyArgs {
-	/// Path to the JSON config.
-	config: PathBuf,
+	/// Path to the JSON config. Omit (on a terminal) to be prompted.
+	config: Option<PathBuf>,
 	/// Show diffs without writing.
 	#[arg(long)]
 	dry_run: bool,
@@ -73,11 +73,15 @@ struct ApplyArgs {
 	/// found on this machine — even ones absent from the config.
 	#[arg(long)]
 	targets_only: bool,
+	/// Prompt for every option interactively (implied when no config is given).
+	#[arg(short, long)]
+	interactive: bool,
 }
 
 #[derive(Args)]
 struct CheckArgs {
-	config: PathBuf,
+	/// Path to the JSON config. Omit (on a terminal) to be prompted.
+	config: Option<PathBuf>,
 	#[arg(long)]
 	product: Option<String>,
 	#[arg(long)]
@@ -91,21 +95,29 @@ struct CheckArgs {
 	/// Only check IDEs listed in the config's `targets` (see `apply --targets-only`).
 	#[arg(long)]
 	targets_only: bool,
+	/// Prompt for every option interactively (implied when no config is given).
+	#[arg(short, long)]
+	interactive: bool,
 }
 
 #[derive(Args)]
 struct KeymapArgs {
-	config: PathBuf,
+	/// Path to the JSON config. Omit (on a terminal) to be prompted.
+	config: Option<PathBuf>,
 	/// Output directory; keymaps are written under `<out>/keymaps/`.
 	#[arg(long)]
-	out: PathBuf,
+	out: Option<PathBuf>,
+	/// Prompt for every option interactively (implied when args are missing).
+	#[arg(short, long)]
+	interactive: bool,
 }
 
 #[derive(Args)]
 struct CreateArgs {
-	/// Output directory for idesync.json + merged scheme files.
+	/// Output directory for idesync.json + merged scheme files. Omit (on a
+	/// terminal) to be prompted.
 	#[arg(long)]
-	out: PathBuf,
+	out: Option<PathBuf>,
 	/// Restrict to these products (repeatable); default: every discovered IDE.
 	#[arg(long = "product")]
 	products: Vec<String>,
@@ -117,7 +129,138 @@ struct CreateArgs {
 	/// Cmd on macOS). Applies to mouse shortcuts too (Ctrl-click → Cmd-click).
 	#[arg(long)]
 	portable_keymap: bool,
+	/// Prompt for every option interactively (implied when no --out is given).
+	#[arg(short, long)]
+	interactive: bool,
 }
+
+// --- interactive wizards -----------------------------------------------------
+
+/// Decide whether to run the interactive wizard. `forced` is the `-i` flag;
+/// `missing` is true when a required input wasn't supplied. Interactive runs only
+/// on a terminal — a missing input off a TTY (e.g. CI) falls through to the
+/// normal "required" error instead of hanging.
+fn want_interactive(forced: bool, missing: bool) -> Result<bool> {
+	if forced && !prompt::is_interactive() {
+		bail!("--interactive requires a terminal (stdin/stdout are not a TTY)");
+	}
+	Ok(forced || (missing && prompt::is_interactive()))
+}
+
+/// Unique JetBrains products discovered on this machine (for menus).
+fn discovered_products() -> Vec<String> {
+	let mut seen = std::collections::BTreeSet::new();
+	for (product, _v, _p) in discovery::discover_all().unwrap_or_default() {
+		seen.insert(product);
+	}
+	seen.into_iter().collect()
+}
+
+fn prompt_config(current: &Option<PathBuf>) -> Result<PathBuf> {
+	let value = match current.as_ref().map(|p| p.display().to_string()) {
+		Some(def) => prompt::text_default("Config path", &def)?,
+		None => prompt::text("Config path")?,
+	};
+	Ok(PathBuf::from(value))
+}
+
+fn prompt_product(current: &Option<String>) -> Result<Option<String>> {
+	let products = discovered_products();
+	let mut items = vec!["All configured targets".to_string()];
+	items.extend(products.iter().cloned());
+	let default = current
+		.as_ref()
+		.and_then(|c| products.iter().position(|p| p == c))
+		.map(|i| i + 1)
+		.unwrap_or(0);
+	let idx = prompt::select("Target product", &items, default)?;
+	Ok((idx > 0).then(|| items[idx].clone()))
+}
+
+fn prompt_os(current: &Option<String>) -> Result<Option<String>> {
+	let items: Vec<String> = ["Host (this machine)", "linux", "macos", "windows"]
+		.iter()
+		.map(|s| s.to_string())
+		.collect();
+	let default = current
+		.as_deref()
+		.and_then(|c| items.iter().position(|i| i == c))
+		.unwrap_or(0);
+	let idx = prompt::select("Target OS", &items, default)?;
+	Ok((idx > 0).then(|| items[idx].clone()))
+}
+
+fn prompt_exclude() -> Result<Vec<Section>> {
+	let variants = Section::value_variants();
+	let labels: Vec<String> = variants
+		.iter()
+		.map(|v| {
+			v.to_possible_value()
+				.map(|p| p.get_name().to_string())
+				.unwrap_or_default()
+		})
+		.collect();
+	let chosen = prompt::multiselect("Exclude sections (space to toggle)", &labels)?;
+	Ok(chosen.into_iter().map(|i| variants[i]).collect())
+}
+
+fn wizard_apply(a: &mut ApplyArgs) -> Result<()> {
+	a.config = Some(prompt_config(&a.config)?);
+	a.product = prompt_product(&a.product)?;
+	a.version = prompt::text_optional("Version (blank = latest installed)")?;
+	a.os = prompt_os(&a.os)?;
+	a.exclude = prompt_exclude()?;
+	a.targets_only = prompt::confirm("Only configured targets (skip discovered IDEs)?", a.targets_only)?;
+	a.dry_run = prompt::confirm("Dry run (show diffs, write nothing)?", a.dry_run)?;
+	a.no_backup = prompt::confirm("Skip backups of overwritten files?", a.no_backup)?;
+	Ok(())
+}
+
+fn wizard_check(a: &mut CheckArgs) -> Result<()> {
+	a.config = Some(prompt_config(&a.config)?);
+	a.product = prompt_product(&a.product)?;
+	a.version = prompt::text_optional("Version (blank = latest installed)")?;
+	a.os = prompt_os(&a.os)?;
+	a.exclude = prompt_exclude()?;
+	a.targets_only = prompt::confirm("Only configured targets (skip discovered IDEs)?", a.targets_only)?;
+	Ok(())
+}
+
+fn wizard_create(a: &mut CreateArgs) -> Result<()> {
+	let def = a
+		.out
+		.as_ref()
+		.map(|p| p.display().to_string())
+		.unwrap_or_else(|| "./dotfiles".to_string());
+	a.out = Some(PathBuf::from(prompt::text_default("Output directory", &def)?));
+	let products = discovered_products();
+	let chosen = prompt::multiselect("Products to snapshot (none = all discovered)", &products)?;
+	a.products = chosen.iter().map(|&i| products[i].clone()).collect();
+	// The primary is only needed when more than one product will be captured.
+	let effective = if a.products.is_empty() { &products } else { &a.products };
+	if effective.len() > 1 {
+		let idx = prompt::select("Primary product (its single-valued settings win)", effective, 0)?;
+		a.primary = Some(effective[idx].clone());
+	}
+	a.portable_keymap = prompt::confirm(
+		"Portable keymap (mod = Ctrl on Linux/Windows, Cmd on macOS)?",
+		a.portable_keymap,
+	)?;
+	Ok(())
+}
+
+fn wizard_keymap(a: &mut KeymapArgs) -> Result<()> {
+	a.config = Some(prompt_config(&a.config)?);
+	let def = a
+		.out
+		.as_ref()
+		.map(|p| p.display().to_string())
+		.unwrap_or_else(|| ".".to_string());
+	a.out = Some(PathBuf::from(prompt::text_default("Output directory", &def)?));
+	Ok(())
+}
+
+// --- command handlers --------------------------------------------------------
 
 fn config_dir_of(path: &Path) -> PathBuf {
 	path.parent()
@@ -204,8 +347,15 @@ fn build_ctx(cfg: &Config, cfg_path: &Path, target: &Target, os: Os) -> Result<(
 	))
 }
 
-fn cmd_apply(a: ApplyArgs) -> Result<i32> {
-	let cfg = Config::load(&a.config)?;
+fn cmd_apply(mut a: ApplyArgs) -> Result<i32> {
+	if want_interactive(a.interactive, a.config.is_none())? {
+		wizard_apply(&mut a)?;
+	}
+	let config = a
+		.config
+		.clone()
+		.ok_or_else(|| anyhow!("config path required (pass it, or run on a terminal for the wizard)"))?;
+	let cfg = Config::load(&config)?;
 	let os = target_os(&a.os)?;
 	let targets = resolve_targets(&cfg, &a.product, &a.version, a.targets_only)?;
 	let configured = configured_products(&cfg);
@@ -216,7 +366,7 @@ fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 
 	let mut total = 0usize;
 	for target in &targets {
-		let (ctx, exists) = build_ctx(&cfg, &a.config, target, os)?;
+		let (ctx, exists) = build_ctx(&cfg, &config, target, os)?;
 		let label = format!("{}{}", target.product, target.version.as_deref().unwrap_or(""));
 		println!("● {label}  [{}]  ({})", ctx.target_os, ctx.ide_dir.display());
 		if !configured.contains(&target.product) {
@@ -258,15 +408,22 @@ fn cmd_apply(a: ApplyArgs) -> Result<i32> {
 	Ok(0)
 }
 
-fn cmd_check(a: CheckArgs) -> Result<i32> {
-	let cfg = Config::load(&a.config)?;
+fn cmd_check(mut a: CheckArgs) -> Result<i32> {
+	if want_interactive(a.interactive, a.config.is_none())? {
+		wizard_check(&mut a)?;
+	}
+	let config = a
+		.config
+		.clone()
+		.ok_or_else(|| anyhow!("config path required (pass it, or run on a terminal for the wizard)"))?;
+	let cfg = Config::load(&config)?;
 	let os = target_os(&a.os)?;
 	let targets = resolve_targets(&cfg, &a.product, &a.version, a.targets_only)?;
 	let configured = configured_products(&cfg);
 
 	let mut drift = 0usize;
 	for target in &targets {
-		let (ctx, _) = build_ctx(&cfg, &a.config, target, os)?;
+		let (ctx, _) = build_ctx(&cfg, &config, target, os)?;
 		let suffix = if configured.contains(&target.product) {
 			""
 		} else {
@@ -290,9 +447,15 @@ fn cmd_check(a: CheckArgs) -> Result<i32> {
 	Ok(if drift == 0 { 0 } else { 1 })
 }
 
-fn cmd_create(a: CreateArgs) -> Result<i32> {
+fn cmd_create(mut a: CreateArgs) -> Result<i32> {
+	if want_interactive(a.interactive, a.out.is_none())? {
+		wizard_create(&mut a)?;
+	}
+	let out = a
+		.out
+		.ok_or_else(|| anyhow!("--out required (pass it, or run on a terminal for the wizard)"))?;
 	crate::extract::create(&crate::extract::CreateOptions {
-		out_dir: a.out,
+		out_dir: out,
 		products: a.products,
 		primary: a.primary,
 		portable_keymap: a.portable_keymap,
@@ -300,13 +463,22 @@ fn cmd_create(a: CreateArgs) -> Result<i32> {
 	Ok(0)
 }
 
-fn cmd_keymap(a: KeymapArgs) -> Result<i32> {
-	let cfg = Config::load(&a.config)?;
+fn cmd_keymap(mut a: KeymapArgs) -> Result<i32> {
+	if want_interactive(a.interactive, a.config.is_none() || a.out.is_none())? {
+		wizard_keymap(&mut a)?;
+	}
+	let config = a
+		.config
+		.ok_or_else(|| anyhow!("config path required (pass it, or run on a terminal for the wizard)"))?;
+	let out = a
+		.out
+		.ok_or_else(|| anyhow!("--out required (pass it, or run on a terminal for the wizard)"))?;
+	let cfg = Config::load(&config)?;
 	let km = cfg
 		.keymap
 		.as_ref()
 		.ok_or_else(|| anyhow!("config has no `keymap` section"))?;
-	let dir = a.out.join("keymaps");
+	let dir = out.join("keymaps");
 	std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 	for os in Os::ALL {
 		let name = keymap::keymap_name(&km.name, os);

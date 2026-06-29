@@ -50,6 +50,10 @@ A Cargo workspace (`[workspace]` root `Cargo.toml`; shared version via
       Both editor crates reuse this so apply/dry-run/backup behave identically.
     - `platform.rs` — `Os` (host/parse/label + JetBrains-y `settings_subdir`/
       `primary_modifier`, kept here as the one shared platform type).
+    - `prompt.rs` — shared interactive-prompt helpers (`text`/`text_default`/
+      `text_optional`/`confirm`/`select`/`multiselect` + `is_interactive`), the one
+      place the `dialoguer` TUI dep lives. Each editor's command wizard calls these so
+      the UX is consistent. `is_interactive` = stdin AND stdout are a TTY.
 - **`crates/jetbrains`** (`idesync-jetbrains`) — the JetBrains plugin (`key = "jb"`).
   `lib.rs` exposes `editor()` + the `Editor` impl; everything else is the original
   engine (see below). Env overrides: `IDESYNC_JB_CONFIG_HOME`, `IDESYNC_JB_DATA_HOME`,
@@ -134,6 +138,10 @@ binary + the crate to the workspace members + binary deps. Use `idesync_core`'s
   `dispatch()`. `apply`/`check` apply to the config's `targets` PLUS every other IDE discovered
   on the machine (`extend_with_discovered`) so an IDE absent from the config still gets the
   SHARED settings. `--targets-only` restricts to configured targets; `--product X` targets just X.
+  **Interactive mode:** required inputs (config / `--out`) are `Option`; when missing (or `-i`)
+  AND `prompt::is_interactive()`, a `wizard_*` fills the args via `core::prompt` (product/OS
+  menus, `exclude` multi-select from `Section::value_variants()`, text out-dir). `want_interactive`
+  gates it so off a TTY a missing input is a normal error, never a hang. `vsc cli.rs` mirrors this.
 
 ## VSCode engine (`crates/vscode/src`)
 
