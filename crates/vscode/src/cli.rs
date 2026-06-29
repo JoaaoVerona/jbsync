@@ -84,9 +84,9 @@ struct CreateArgs {
 	/// Restrict to these editors (repeatable); default: every discovered editor.
 	#[arg(long = "product")]
 	products: Vec<String>,
-	/// Fold captured `ctrl` keys with a matching `cmd` macOS override into the
-	/// platform-relative `mod` token, so the binding follows the OS on apply
-	/// (Ctrl on Linux/Windows, Cmd on macOS).
+	/// Fold the host's primary modifier in captured bindings into the
+	/// platform-relative `mod` token (Ctrl on Linux/Windows, Cmd on macOS), so
+	/// they follow the OS on apply. Literal `alt`/non-primary modifiers stay put.
 	#[arg(long)]
 	portable_keymap: bool,
 	/// Prompt for every option interactively (implied when no --out is given).
@@ -298,9 +298,9 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 			if let Ok(text) = std::fs::read_to_string(dir.join("keybindings.json")) {
 				if let Ok(Value::Array(arr)) = crate::jsonc::parse(&text) {
 					if !arr.is_empty() {
-						// `--portable-keymap`: fold ctrl+cmd pairs back into `mod`.
+						// `--portable-keymap`: fold the host primary modifier into `mod`.
 						keybindings = Some(if a.portable_keymap {
-							crate::keymap::collapse(&arr)
+							crate::keymap::collapse(&arr, crate::keymap::host_primary())
 						} else {
 							arr
 						});

@@ -167,14 +167,16 @@ fn mod_token_expands_on_apply_and_stays_in_sync() {
 }
 
 /// `create --portable-keymap` folds a captured `ctrl` key + matching `cmd` mac
-/// override back into the `mod` token.
+/// override back into the `mod` token. The realistic captured shape is a bare
+/// `key` (no `mac`) using the host primary modifier — on the CI hosts (Linux /
+/// Windows) that's `ctrl`. A literal non-primary modifier (`alt`) is left alone.
 #[test]
-fn create_portable_keymap_collapses_ctrl_cmd_into_mod() {
+fn create_portable_keymap_folds_host_primary_into_mod() {
 	let tmp = tempfile::tempdir().unwrap();
 	let vs_base = tmp.path().join("vscode-config");
 	write(
 		vs_base.join("Code/User/keybindings.json"),
-		r#"[ { "key": "ctrl+d", "mac": "cmd+d", "command": "x" } ]"#,
+		r#"[ { "key": "ctrl+shift+k", "command": "del" }, { "key": "alt+up", "command": "moveUp" } ]"#,
 	);
 	let out_dir = tmp.path().join("out");
 	let extra = [("IDESYNC_VSC_CONFIG_HOME", vs_base.to_str().unwrap())];
@@ -186,8 +188,15 @@ fn create_portable_keymap_collapses_ctrl_cmd_into_mod() {
 	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
 
 	let captured = read(out_dir.join("idesync.json"));
-	assert!(captured.contains(r#""mod+d""#), "collapsed to mod: {captured}");
-	assert!(!captured.contains("cmd+d"), "mac override folded away: {captured}");
+	assert!(
+		captured.contains(r#""mod+shift+k""#),
+		"host primary folded to mod: {captured}"
+	);
+	assert!(!captured.contains("ctrl+shift+k"), "ctrl should be gone: {captured}");
+	assert!(
+		captured.contains(r#""alt+up""#),
+		"non-primary modifier left alone: {captured}"
+	);
 }
 
 /// Off a TTY (output is captured), `vsc apply` with no config errors instead of

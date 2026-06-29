@@ -9,9 +9,12 @@
 //! Ctrl on Linux/Windows and Cmd on macOS.
 //!
 //! [`expand`] runs on every apply (`mod` is just config syntax idesync resolves).
-//! [`collapse`] is the reverse, used by `create --portable-keymap` to fold a
-//! captured `ctrl` key + matching `cmd` mac override back into `mod`.
+//! [`collapse`] is the reverse, used by `create --portable-keymap`: it folds the
+//! host's primary modifier in a captured binding back into `mod` — a cross-platform
+//! `ctrl` key + matching `cmd` mac pair on any host, OR (the common case) a bare
+//! `key` using the host primary (`ctrl` on Linux/Windows, `cmd` on macOS).
 
+use idesync_core::Os;
 use serde_json::Value;
 
 /// Expand every `mod` token in a keybindings array (apply direction).
@@ -19,9 +22,20 @@ pub fn expand(bindings: &[Value]) -> Vec<Value> {
 	bindings.iter().map(expand_one).collect()
 }
 
-/// Collapse `ctrl`-key + `cmd`-mac pairs back into `mod` (capture direction).
-pub fn collapse(bindings: &[Value]) -> Vec<Value> {
-	bindings.iter().map(collapse_one).collect()
+/// Collapse host-primary-modifier bindings back into `mod` (capture direction).
+/// `primary` is the host's VSCode primary modifier — "cmd" on macOS, "ctrl"
+/// elsewhere (see [`host_primary`]).
+pub fn collapse(bindings: &[Value], primary: &str) -> Vec<Value> {
+	bindings.iter().map(|b| collapse_one(b, primary)).collect()
+}
+
+/// The host's VSCode primary modifier: "cmd" on macOS, "ctrl" elsewhere.
+pub fn host_primary() -> &'static str {
+	if matches!(Os::host(), Os::Macos) {
+		"cmd"
+	} else {
+		"ctrl"
+	}
 }
 
 fn expand_one(entry: &Value) -> Value {
@@ -57,25 +71,32 @@ fn expand_one(entry: &Value) -> Value {
 	Value::Object(out)
 }
 
-fn collapse_one(entry: &Value) -> Value {
+fn collapse_one(entry: &Value, primary: &str) -> Value {
 	let Value::Object(map) = entry else {
 		return entry.clone();
 	};
-	let (Some(key), Some(mac)) = (
-		map.get("key").and_then(Value::as_str),
-		map.get("mac").and_then(Value::as_str),
-	) else {
+	let Some(key) = map.get("key").and_then(Value::as_str) else {
 		return entry.clone();
 	};
-	// Only collapse when the mac override is *exactly* the cmd-variant of a
-	// ctrl-bearing key — otherwise the mac binding is a genuine, different override.
-	if has_ctrl(key) && mac == replace_ctrl(key, "cmd") {
-		let mut out = map.clone();
-		out.insert("key".to_string(), Value::String(replace_ctrl(key, "mod")));
-		out.remove("mac");
-		Value::Object(out)
-	} else {
+	if let Some(mac) = map.get("mac").and_then(Value::as_str) {
+		// A cross-platform `ctrl` key + its exact `cmd` mac override → `mod` (any
+		// host). Otherwise the mac is a genuine, different override — leave it.
+		if has_ctrl(key) && mac == replace_ctrl(key, "cmd") {
+			let mut out = map.clone();
+			out.insert("key".to_string(), Value::String(replace_ctrl(key, "mod")));
+			out.remove("mac");
+			return Value::Object(out);
+		}
+		return entry.clone();
+	}
+	// Single key, no mac (the usual captured shape): fold the host primary → `mod`.
+	let folded = fold_primary(key, primary);
+	if folded == key {
 		entry.clone()
+	} else {
+		let mut out = map.clone();
+		out.insert("key".to_string(), Value::String(folded));
+		Value::Object(out)
 	}
 }
 
@@ -89,6 +110,20 @@ fn replace_ctrl(key: &str, repl: &str) -> String {
 	map_tokens(key, |seg| {
 		(seg.eq_ignore_ascii_case("ctrl") || seg.eq_ignore_ascii_case("control")).then(|| repl.to_string())
 	})
+}
+
+/// Replace the host primary modifier token(s) with `mod`. `primary` is "cmd"
+/// (macOS — also matches the `meta` alias) or "ctrl" (also matches `control`).
+fn fold_primary(key: &str, primary: &str) -> String {
+	map_tokens(key, |seg| is_primary_token(seg, primary).then(|| "mod".to_string()))
+}
+
+fn is_primary_token(seg: &str, primary: &str) -> bool {
+	if primary.eq_ignore_ascii_case("cmd") {
+		seg.eq_ignore_ascii_case("cmd") || seg.eq_ignore_ascii_case("meta")
+	} else {
+		seg.eq_ignore_ascii_case("ctrl") || seg.eq_ignore_ascii_case("control")
+	}
 }
 
 fn has_mod(key: &str) -> bool {
@@ -177,16 +212,36 @@ mod tests {
 	}
 
 	#[test]
-	fn collapse_folds_ctrl_and_matching_cmd_into_mod() {
-		let out = collapse(&[json!({ "key": "ctrl+d", "mac": "cmd+d", "command": "x" })]);
+	fn collapse_folds_ctrl_and_matching_cmd_pair_into_mod() {
+		// A cross-platform pair folds on any host.
+		let out = collapse(&[json!({ "key": "ctrl+d", "mac": "cmd+d", "command": "x" })], "ctrl");
 		assert_eq!(out[0], json!({ "key": "mod+d", "command": "x" }));
+	}
+
+	#[test]
+	fn collapse_folds_bare_host_primary_key() {
+		// The common captured shape: a single `key`, no `mac`.
+		let on_linux = collapse(&[json!({ "key": "ctrl+shift+k", "command": "x" })], "ctrl");
+		assert_eq!(on_linux[0], json!({ "key": "mod+shift+k", "command": "x" }));
+		let on_mac = collapse(&[json!({ "key": "cmd+d", "command": "x" })], "cmd");
+		assert_eq!(on_mac[0], json!({ "key": "mod+d", "command": "x" }));
+	}
+
+	#[test]
+	fn collapse_leaves_non_primary_modifiers_alone() {
+		// On macOS a literal `ctrl` (Control, not the primary) stays put …
+		let entry = json!({ "key": "ctrl+d", "command": "x" });
+		assert_eq!(collapse(std::slice::from_ref(&entry), "cmd")[0], entry);
+		// … and `alt` is never the primary on any host.
+		let alt = json!({ "key": "alt+up", "command": "x" });
+		assert_eq!(collapse(std::slice::from_ref(&alt), "ctrl")[0], alt);
 	}
 
 	#[test]
 	fn collapse_leaves_genuine_different_mac_override() {
 		let entry = json!({ "key": "ctrl+d", "mac": "cmd+shift+d", "command": "x" });
 		assert_eq!(
-			collapse(std::slice::from_ref(&entry))[0],
+			collapse(std::slice::from_ref(&entry), "ctrl")[0],
 			entry,
 			"mac isn't the cmd-variant → keep"
 		);
@@ -196,7 +251,7 @@ mod tests {
 	fn expand_then_collapse_round_trips() {
 		let original = json!({ "key": "mod+k mod+s", "command": "x" });
 		let expanded = expand(std::slice::from_ref(&original));
-		let collapsed = collapse(&expanded);
+		let collapsed = collapse(&expanded, "ctrl");
 		assert_eq!(collapsed[0], original);
 	}
 

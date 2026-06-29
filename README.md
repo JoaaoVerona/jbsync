@@ -432,8 +432,9 @@ How it differs from the JetBrains side:
 
 `idesync vsc create --out DIR` snapshots your installed VSCode editors into
 `DIR/idesync.json` (and `idesync list` shows which editors were discovered).
-`--product Code` targets just that editor; `--portable-keymap` folds captured
-`ctrl` keys with a matching `cmd` macOS override back into the `mod` token.
+`--product Code` targets just that editor; `--portable-keymap` folds the host's
+primary modifier in captured bindings into the `mod` token (Ctrl on Linux/Windows,
+Cmd on macOS), leaving literal `alt`/non-primary modifiers untouched.
 
 ## Recommended workflow
 
