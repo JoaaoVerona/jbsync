@@ -1,25 +1,29 @@
 //! The `mod` token for VSCode keybindings — the VSCode analog of the JetBrains
 //! `mod` modifier (Ctrl on Linux/Windows, Cmd on macOS).
 //!
-//! VSCode `keybindings.json` is a single cross-platform file: an entry's `key`
-//! applies everywhere, and an optional `mac`/`linux`/`win` field overrides it on
-//! that platform. So idesync doesn't generate per-OS files like it does for
-//! JetBrains — instead it lets you write `"key": "mod+d"` once and **expands** it
-//! on apply into `"key": "ctrl+d"` + `"mac": "cmd+d"`, which VSCode reads as
-//! Ctrl on Linux/Windows and Cmd on macOS.
+//! Unlike JetBrains action shortcuts, VSCode's user `keybindings.json` has no
+//! per-entry `mac`/`linux`/`win` override field — that only exists in extension
+//! manifests' `contributes.keybindings` (see
+//! <https://github.com/microsoft/vscode/issues/45679>). A user keybinding entry
+//! is just `key` (+ `command`/`when`/`args`), full stop. So idesync doesn't
+//! generate per-OS files like it does for JetBrains, and it can't stash a
+//! platform override alongside `key` either — instead `"key": "mod+d"` is
+//! **expanded** at apply time straight into the resolved key for the host
+//! `apply` is running on: `"key": "cmd+d"` on macOS, `"key": "ctrl+d"`
+//! elsewhere.
 //!
 //! [`expand`] runs on every apply (`mod` is just config syntax idesync resolves).
 //! [`collapse`] is the reverse, used by `create --portable-keymap`: it folds the
-//! host's primary modifier in a captured binding back into `mod` — a cross-platform
-//! `ctrl` key + matching `cmd` mac pair on any host, OR (the common case) a bare
-//! `key` using the host primary (`ctrl` on Linux/Windows, `cmd` on macOS).
+//! host's primary modifier in a captured binding back into `mod` (`ctrl` on
+//! Linux/Windows, `cmd` on macOS).
 
-use idesync_core::Os;
 use serde_json::Value;
 
-/// Expand every `mod` token in a keybindings array (apply direction).
-pub fn expand(bindings: &[Value]) -> Vec<Value> {
-	bindings.iter().map(expand_one).collect()
+/// Expand every `mod` token in a keybindings array into `primary` (apply
+/// direction). `primary` is the target host's VSCode primary modifier — see
+/// [`host_primary`].
+pub fn expand(bindings: &[Value], primary: &str) -> Vec<Value> {
+	bindings.iter().map(|b| expand_one(b, primary)).collect()
 }
 
 /// Collapse host-primary-modifier bindings back into `mod` (capture direction).
@@ -31,43 +35,25 @@ pub fn collapse(bindings: &[Value], primary: &str) -> Vec<Value> {
 
 /// The host's VSCode primary modifier: "cmd" on macOS, "ctrl" elsewhere.
 pub fn host_primary() -> &'static str {
-	if matches!(Os::host(), Os::Macos) {
+	if matches!(idesync_core::Os::host(), idesync_core::Os::Macos) {
 		"cmd"
 	} else {
 		"ctrl"
 	}
 }
 
-fn expand_one(entry: &Value) -> Value {
+fn expand_one(entry: &Value, primary: &str) -> Value {
 	let Value::Object(map) = entry else {
 		return entry.clone();
 	};
+	let Some(key) = map.get("key").and_then(Value::as_str) else {
+		return entry.clone();
+	};
+	if !has_mod(key) {
+		return entry.clone();
+	}
 	let mut out = map.clone();
-	let orig_key = map.get("key").and_then(Value::as_str).map(str::to_string);
-	let key_has_mod = orig_key.as_deref().map(has_mod).unwrap_or(false);
-	let had_mac = map.contains_key("mac");
-
-	// Resolve `mod` in each platform field: the mac override → cmd, the rest → ctrl.
-	for field in ["key", "linux", "win"] {
-		if let Some(s) = out.get(field).and_then(Value::as_str) {
-			if has_mod(s) {
-				out.insert(field.to_string(), Value::String(replace_mod(s, "ctrl")));
-			}
-		}
-	}
-	if let Some(s) = out.get("mac").and_then(Value::as_str) {
-		if has_mod(s) {
-			out.insert("mac".to_string(), Value::String(replace_mod(s, "cmd")));
-		}
-	}
-
-	// When `key` used `mod` and there's no explicit mac override, add the cmd
-	// variant so macOS gets Cmd while Linux/Windows fall through to the ctrl `key`.
-	if key_has_mod && !had_mac {
-		if let Some(k) = orig_key {
-			out.insert("mac".to_string(), Value::String(replace_mod(&k, "cmd")));
-		}
-	}
+	out.insert("key".to_string(), Value::String(replace_mod(key, primary)));
 	Value::Object(out)
 }
 
@@ -161,54 +147,34 @@ mod tests {
 	use serde_json::json;
 
 	#[test]
-	fn expands_mod_key_into_ctrl_plus_cmd_mac() {
-		let out = expand(&[json!({ "key": "mod+d", "command": "x" })]);
-		assert_eq!(out[0], json!({ "key": "ctrl+d", "mac": "cmd+d", "command": "x" }));
+	fn expands_mod_key_to_the_target_primary() {
+		let on_mac = expand(&[json!({ "key": "mod+d", "command": "x" })], "cmd");
+		assert_eq!(on_mac[0], json!({ "key": "cmd+d", "command": "x" }));
+		let elsewhere = expand(&[json!({ "key": "mod+d", "command": "x" })], "ctrl");
+		assert_eq!(elsewhere[0], json!({ "key": "ctrl+d", "command": "x" }));
 	}
 
 	#[test]
 	fn expands_chords_and_multiple_mods() {
-		let out = expand(&[json!({ "key": "mod+k mod+s", "command": "x" })]);
-		assert_eq!(
-			out[0],
-			json!({ "key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "x" })
-		);
+		let out = expand(&[json!({ "key": "mod+k mod+s", "command": "x" })], "cmd");
+		assert_eq!(out[0], json!({ "key": "cmd+k cmd+s", "command": "x" }));
 	}
 
 	#[test]
 	fn literal_ctrl_is_left_alone() {
 		let entry = json!({ "key": "ctrl+d", "command": "x" });
 		assert_eq!(
-			expand(std::slice::from_ref(&entry))[0],
+			expand(std::slice::from_ref(&entry), "cmd")[0],
 			entry,
 			"no mod token → untouched"
 		);
 	}
 
 	#[test]
-	fn explicit_mac_override_is_respected_not_clobbered() {
-		let out = expand(&[json!({ "key": "mod+d", "mac": "cmd+shift+d", "command": "x" })]);
-		assert_eq!(
-			out[0],
-			json!({ "key": "ctrl+d", "mac": "cmd+shift+d", "command": "x" }),
-			"key resolves to ctrl; user's mac override kept"
-		);
-	}
-
-	#[test]
-	fn mod_only_in_mac_resolves_to_cmd() {
-		let out = expand(&[json!({ "key": "alt+d", "mac": "mod+d", "command": "x" })]);
-		assert_eq!(out[0], json!({ "key": "alt+d", "mac": "cmd+d", "command": "x" }));
-	}
-
-	#[test]
 	fn mod_is_a_whole_token_not_a_substring() {
 		// "model" must not be mangled; only the standalone `mod` modifier expands.
-		let out = expand(&[json!({ "key": "mod+m", "command": "openModel" })]);
-		assert_eq!(
-			out[0],
-			json!({ "key": "ctrl+m", "mac": "cmd+m", "command": "openModel" })
-		);
+		let out = expand(&[json!({ "key": "mod+m", "command": "openModel" })], "cmd");
+		assert_eq!(out[0], json!({ "key": "cmd+m", "command": "openModel" }));
 	}
 
 	#[test]
@@ -250,7 +216,7 @@ mod tests {
 	#[test]
 	fn expand_then_collapse_round_trips() {
 		let original = json!({ "key": "mod+k mod+s", "command": "x" });
-		let expanded = expand(std::slice::from_ref(&original));
+		let expanded = expand(std::slice::from_ref(&original), "ctrl");
 		let collapsed = collapse(&expanded, "ctrl");
 		assert_eq!(collapsed[0], original);
 	}
@@ -258,8 +224,8 @@ mod tests {
 	#[test]
 	fn expand_is_idempotent_on_already_expanded() {
 		// A second apply (config still says mod) must produce the same file bytes.
-		let once = expand(&[json!({ "key": "mod+d", "command": "x" })]);
-		let twice = expand(&once);
+		let once = expand(&[json!({ "key": "mod+d", "command": "x" })], "cmd");
+		let twice = expand(&once, "cmd");
 		assert_eq!(once, twice);
 	}
 }

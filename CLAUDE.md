@@ -148,14 +148,18 @@ editor (VS Code, Insiders, VSCodium, Cursor, Windsurf).
 
 - `config.rs` — the standalone `VsCodeCfg` (flat top-level: `targets`, `settings`,
   `keybindings`, `extensions`). Field names mirror `idesync-vscode.schema.json`.
-- `keymap.rs` — the `mod` token (VSCode analog of JetBrains' `mod`). VSCode keeps a
-  single cross-platform `keybindings.json` with native `mac`/`linux`/`win` per-entry
-  overrides, so there's no per-OS file generation; instead `expand` (run on every
-  apply, before `render_keybindings`) rewrites `"key": "mod+d"` → `"key": "ctrl+d"` +
-  `"mac": "cmd+d"` (an explicit `mac` is respected; `ctrl` stays literal). `collapse`
-  is the reverse for `vsc create --portable-keymap`. Tokens match whole modifier
-  segments across `+`-joins and space-separated chords. Expansion is deterministic →
-  idempotent (serde_json `Map` is a BTreeMap, so inserted `mac` sorts stably).
+- `keymap.rs` — the `mod` token (VSCode analog of JetBrains' `mod`). VSCode's user
+  `keybindings.json` has NO per-entry `mac`/`linux`/`win` override field (that only
+  exists in extension manifests' `contributes.keybindings`, not user keybindings —
+  https://github.com/microsoft/vscode/issues/45679), so there's no way to encode
+  "different key per platform" in one entry; instead `expand` (run on every apply,
+  before `render_keybindings`, given the target host's primary modifier) resolves
+  `"key": "mod+d"` straight to `"key": "cmd+d"` on macOS / `"key": "ctrl+d"`
+  elsewhere — `ctrl` stays literal. `collapse` is the reverse for
+  `vsc create --portable-keymap` (it also folds the old pre-fix `ctrl` key + `cmd`
+  mac pair shape back into `mod`, for migrating captures from before this was
+  fixed). Tokens match whole modifier segments across `+`-joins and
+  space-separated chords. Expansion is deterministic → idempotent.
 - `jsonc.rs` — the VSCode counterpart to `xmlpatch.rs`: byte-minimal, comment-preserving
   JSONC edits. `merge_settings` does the surgical TOP-LEVEL-key set/replace (apply edits
   high-offset-first); `parse` strips comments/trailing-commas into a `serde_json::Value` for

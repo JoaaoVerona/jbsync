@@ -18,7 +18,7 @@
 		},
 		"keybindings": {
 			"type": "array",
-			"description": "The keybindings.json array. When present, idesync OWNS keybindings.json (like a generated keymap — seed it with `create`); absent = left untouched. A `mod` modifier token is expanded on apply to Ctrl on Linux/Windows and Cmd on macOS (emitted as a `ctrl` key + a `cmd` mac override).",
+			"description": "The keybindings.json array. When present, idesync OWNS keybindings.json (like a generated keymap — seed it with `create`); absent = left untouched. A `mod` modifier token is resolved on apply to the target host's primary modifier (Ctrl on Linux/Windows, Cmd on macOS), written directly into `key` — VSCode's user keybindings.json has no per-entry platform override field, so the same config produces a different `key` on each host it's applied to.",
 			"items": {
 				"type": "object",
 				"properties": {
@@ -29,9 +29,6 @@
 					},
 					"command": { "type": "string" },
 					"when": { "type": "string" },
-					"mac": { "type": "string", "description": "macOS-specific override (set automatically when `key` uses `mod`)." },
-					"linux": { "type": "string", "description": "Linux-specific override." },
-					"win": { "type": "string", "description": "Windows-specific override." },
 					"args": {}
 				}
 			}

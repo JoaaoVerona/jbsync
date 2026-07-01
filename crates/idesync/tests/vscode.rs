@@ -145,8 +145,10 @@ fn create_captures_settings_keybindings_and_extensions() {
 	);
 }
 
-/// A `mod` token in the config expands on apply into a `ctrl` key + `cmd` mac
-/// override, and a follow-up `check` reports in sync (idempotent).
+/// A `mod` token in the config expands on apply straight into `key`, resolved
+/// for the host running `apply` — no synthetic `mac`/`linux`/`win` field, since
+/// VSCode's user keybindings.json doesn't support per-entry platform overrides.
+/// A follow-up `check` reports in sync (idempotent).
 #[test]
 fn mod_token_expands_on_apply_and_stays_in_sync() {
 	let tmp = tempfile::tempdir().unwrap();
@@ -163,8 +165,9 @@ fn mod_token_expands_on_apply_and_stays_in_sync() {
 	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
 
 	let kb = read(vs_base.join("Code/User/keybindings.json"));
+	// CI hosts (Linux/Windows) resolve `mod` to `ctrl`; only macOS resolves to `cmd`.
 	assert!(kb.contains(r#""key": "ctrl+d""#), "expanded key: {kb}");
-	assert!(kb.contains(r#""mac": "cmd+d""#), "added mac override: {kb}");
+	assert!(!kb.contains(r#""mac""#), "no synthetic mac field: {kb}");
 
 	let chk = vsc(&extra, &["check", cfg.to_str().unwrap()]);
 	assert!(

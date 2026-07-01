@@ -206,7 +206,7 @@ pub fn build_plan(vc: &VsCodeCfg, fam: &Family) -> Result<VsPlan> {
 		let path = dir.join("keybindings.json");
 		let old = std::fs::read_to_string(&path).ok();
 		// Expand the `mod` token (Ctrl on Linux/Windows, Cmd on macOS) before owning the file.
-		let expanded = crate::keymap::expand(bindings);
+		let expanded = crate::keymap::expand(bindings, crate::keymap::host_primary());
 		let new = render_keybindings(&expanded)?;
 		files.push(file_change(path, "keybindings.json", old, new));
 	}
