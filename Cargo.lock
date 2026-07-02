@@ -295,7 +295,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "idesync"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "idesync-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "idesync-jetbrains"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "idesync-vscode"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
