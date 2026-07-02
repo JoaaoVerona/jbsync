@@ -302,6 +302,7 @@ dependencies = [
  "idesync-core",
  "idesync-jetbrains",
  "idesync-vscode",
+ "serde_json",
  "tempfile",
 ]
 
@@ -341,6 +342,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "zip",
 ]
 
 [[package]]

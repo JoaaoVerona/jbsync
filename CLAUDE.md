@@ -173,10 +173,25 @@ editor (VS Code, Insiders, VSCodium, Cursor, Windsurf).
   comments preserved); **keybindings.json is OWNED wholesale** (like a generated keymap — seed
   with `create`). Extension detect/install parallels JetBrains `plugins.rs`: read the
   `extensions/extensions.json` manifest for installed IDs (case-insensitive), `--install-extension`
-  the missing ones. NB: the extension CLI writes to the real `~/.vscode*` and CANNOT be
-  sandboxed by env — an `apply` smoke test on a box with a real `code`/`cursor` actually installs.
+  the missing ones — marketplace entries by id, `extensions.local` entries from their bundled
+  `.vsix` file (path relative to the config file; `PlanOpts.no_local` skips them). NB: the
+  extension CLI writes to the real `~/.vscode*` and CANNOT be sandboxed by env — an `apply`
+  smoke test on a box with a real `code`/`cursor` actually installs.
+- `vsix.rs` — repack an installed extension dir into a valid `.vsix` (zip of
+  `extension.vsixmanifest` + generated OPC `[Content_Types].xml` at the root, payload under
+  `extension/`). Works because VSCode keeps the original manifest as a hidden `.vsixmanifest`
+  inside every installed extension folder. Used by `create` for **locally-installed extensions**
+  (`"source": "vsix"` in the manifest metadata — installed from a file, no marketplace to
+  download from on another machine; gallery installs say `"source": "gallery"`). A
+  platform-specific `metadata.targetPlatform` (≠ the literal `"undefined"`) gets a loud warning:
+  that bundle only installs on matching machines.
 - `cli.rs` — the `vsc` namespace (`apply`/`check`/`create`); `create` capture unions editors
   (first wins on settings, keybindings from first that has any, union of installed extensions).
+  Local (vsix-sourced) extensions are bundled into `<out>/extensions/*.vsix` + `extensions.local`
+  config entries by default — an id also installed from a marketplace in another editor is NOT
+  bundled (gallery wins). `--no-local` on `create` skips bundling entirely (the ids are omitted,
+  not moved to `install` — they aren't on any marketplace); `--no-local` on `apply`/`check` skips
+  installing/reporting bundled extensions.
 
 ## Project conventions (mirrors the sibling `runfile` project)
 

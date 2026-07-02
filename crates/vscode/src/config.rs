@@ -37,6 +37,21 @@ pub struct VsCodeExtensionsCfg {
 	/// ones not already present are installed, so `apply` stays idempotent.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub install: Vec<String>,
+	/// Locally-installed (non-marketplace) extensions bundled as `.vsix` files
+	/// next to the config (written by `create`). Each is installed from its
+	/// bundled file when the id is missing; `--no-local` skips them.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub local: Vec<LocalExtension>,
+}
+
+/// A locally-installed extension carried with the config as a `.vsix` bundle —
+/// there is no marketplace to download it from on the target machine.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct LocalExtension {
+	/// Extension ID (`publisher.name`), for the already-installed check.
+	pub id: String,
+	/// Path to the bundled `.vsix`, relative to the config file.
+	pub vsix: String,
 }
 
 impl VsCodeCfg {

@@ -12,17 +12,18 @@
 //! `<AppDir>` folders; `IDESYNC_VSC_HOME` overrides the home dir used to find
 //! per-editor `extensions/` (both for tests / non-standard installs).
 
-use crate::config::VsCodeCfg;
+use crate::config::{VsCodeCfg, VsCodeExtensionsCfg};
 use crate::jsonc;
 use anyhow::{Context, Result};
 use idesync_core::FileChange;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Ensure-install VSCode extensions via the editor CLI (`code
-/// --install-extension <id>`). The VSCode-family counterpart to a JetBrains
-/// plugin install: only the IDs not already present are listed.
+/// Ensure-install VSCode extensions via the editor CLI: `--install-extension
+/// <id>` for marketplace extensions, `--install-extension <file.vsix>` for
+/// bundled local ones. The VSCode-family counterpart to a JetBrains plugin
+/// install: only the extensions not already present are listed.
 #[derive(Debug, Clone)]
 pub struct ExtensionInstall {
 	/// The editor's display name (e.g. "Code", "VSCodium").
@@ -31,18 +32,34 @@ pub struct ExtensionInstall {
 	pub cli_name: String,
 	/// Resolved CLI path on PATH, or None if it could not be found.
 	pub cli: Option<PathBuf>,
+	/// Marketplace IDs to install.
 	pub ids: Vec<String>,
+	/// Bundled local extensions to install from a `.vsix` file: (id, path).
+	pub local: Vec<(String, PathBuf)>,
 }
 
 impl ExtensionInstall {
-	/// Arguments after the CLI binary: `--install-extension <id>` per id.
+	/// Arguments after the CLI binary: `--install-extension <id-or-vsix>` each.
 	pub fn args(&self) -> Vec<String> {
-		let mut a = Vec::with_capacity(self.ids.len() * 2);
+		let mut a = Vec::with_capacity((self.ids.len() + self.local.len()) * 2);
 		for id in &self.ids {
 			a.push("--install-extension".to_string());
 			a.push(id.clone());
 		}
+		for (_, vsix) in &self.local {
+			a.push("--install-extension".to_string());
+			a.push(vsix.display().to_string());
+		}
 		a
+	}
+
+	/// Every extension id this action installs (marketplace + local).
+	pub fn all_ids(&self) -> Vec<&str> {
+		self.ids
+			.iter()
+			.map(String::as_str)
+			.chain(self.local.iter().map(|(id, _)| id.as_str()))
+			.collect()
 	}
 
 	pub fn command_display(&self) -> String {
@@ -172,6 +189,15 @@ pub fn resolve_editors(vc: &VsCodeCfg, product: Option<&str>, targets_only: bool
 	out
 }
 
+/// Per-run inputs to [`build_plan`] beyond the config itself.
+pub struct PlanOpts<'a> {
+	/// Directory the config file lives in — `extensions.local` `.vsix` paths
+	/// resolve relative to it.
+	pub config_dir: &'a Path,
+	/// Skip bundled local `.vsix` installs (`--no-local`).
+	pub no_local: bool,
+}
+
 /// The declarative + imperative work for one VSCode editor.
 pub struct VsPlan {
 	pub files: Vec<FileChange>,
@@ -190,7 +216,7 @@ impl VsPlan {
 
 /// Compute changes for one editor: settings.json merge, keybindings.json
 /// (owned), and any missing-extension installs.
-pub fn build_plan(vc: &VsCodeCfg, fam: &Family) -> Result<VsPlan> {
+pub fn build_plan(vc: &VsCodeCfg, fam: &Family, opts: &PlanOpts) -> Result<VsPlan> {
 	let dir = user_dir(fam)?;
 	let mut files = Vec::new();
 
@@ -214,7 +240,7 @@ pub fn build_plan(vc: &VsCodeCfg, fam: &Family) -> Result<VsPlan> {
 	let installs = vc
 		.extensions
 		.as_ref()
-		.map(|ext| plan_extensions(fam, &ext.install))
+		.map(|ext| plan_extensions(fam, ext, opts))
 		.transpose()?
 		.flatten()
 		.into_iter()
@@ -244,19 +270,30 @@ fn render_keybindings(bindings: &[Value]) -> Result<String> {
 	))
 }
 
-/// An [`ExtensionInstall`] for the IDs not already present, or None if all are
-/// installed (or none requested).
-fn plan_extensions(fam: &Family, want: &[String]) -> Result<Option<ExtensionInstall>> {
-	if want.is_empty() {
+/// An [`ExtensionInstall`] for the extensions not already present —
+/// marketplace IDs plus bundled local `.vsix` files (paths resolved against
+/// the config dir) — or None if everything is installed (or none requested).
+fn plan_extensions(fam: &Family, ext: &VsCodeExtensionsCfg, opts: &PlanOpts) -> Result<Option<ExtensionInstall>> {
+	if ext.install.is_empty() && ext.local.is_empty() {
 		return Ok(None);
 	}
 	let installed = installed_extensions(fam);
-	let missing: Vec<String> = want
+	let missing: Vec<String> = ext
+		.install
 		.iter()
 		.filter(|id| !installed.contains(&id.to_ascii_lowercase()))
 		.cloned()
 		.collect();
-	if missing.is_empty() {
+	let local: Vec<(String, PathBuf)> = if opts.no_local {
+		vec![]
+	} else {
+		ext.local
+			.iter()
+			.filter(|l| !installed.contains(&l.id.to_ascii_lowercase()))
+			.map(|l| (l.id.clone(), opts.config_dir.join(&l.vsix)))
+			.collect()
+	};
+	if missing.is_empty() && local.is_empty() {
 		return Ok(None);
 	}
 	Ok(Some(ExtensionInstall {
@@ -264,29 +301,76 @@ fn plan_extensions(fam: &Family, want: &[String]) -> Result<Option<ExtensionInst
 		cli_name: fam.cli.to_string(),
 		cli: find_on_path(fam.cli),
 		ids: missing,
+		local,
 	}))
 }
 
-/// Extension IDs (`publisher.name`, original casing, sorted/deduped) installed
-/// for this editor, read from the `extensions/extensions.json` manifest VSCode
-/// maintains. Used by `create` to capture the installed set.
-pub fn installed_extension_ids(fam: &Family) -> Vec<String> {
-	let Some(home) = home_base() else {
+/// One entry of an editor's `extensions/extensions.json` manifest, with the
+/// metadata `create` needs to split marketplace installs from local `.vsix`
+/// ones.
+pub struct InstalledExt {
+	/// Extension ID (`publisher.name`), original casing.
+	pub id: String,
+	/// `metadata.source`: "gallery" for marketplace installs, "vsix" for local
+	/// file installs. Absent in old manifests (treated as gallery).
+	pub source: Option<String>,
+	/// Folder name under the editor's `extensions/` dir.
+	pub relative_location: Option<String>,
+	/// `metadata.targetPlatform`; the literal string "undefined" means
+	/// platform-neutral.
+	pub target_platform: Option<String>,
+}
+
+impl InstalledExt {
+	/// True if this extension was installed from a `.vsix` file (no marketplace
+	/// to download it from on another machine).
+	pub fn is_local(&self) -> bool {
+		self.source.as_deref() == Some("vsix")
+	}
+}
+
+/// Parse the `extensions/extensions.json` manifest VSCode maintains for this
+/// editor. Used by `create` to capture the installed set.
+pub fn installed_manifest(fam: &Family) -> Vec<InstalledExt> {
+	let Some(dir) = extensions_dir(fam) else {
 		return vec![];
 	};
-	let manifest = home.join(fam.ext_dir).join("extensions.json");
-	let Ok(text) = std::fs::read_to_string(&manifest) else {
+	let Ok(text) = std::fs::read_to_string(dir.join("extensions.json")) else {
 		return vec![];
 	};
-	let mut out = BTreeSet::new();
+	let mut out = Vec::new();
 	if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(&text) {
 		for it in items {
-			if let Some(id) = it.get("identifier").and_then(|i| i.get("id")).and_then(Value::as_str) {
-				out.insert(id.to_string());
-			}
+			let Some(id) = it.get("identifier").and_then(|i| i.get("id")).and_then(Value::as_str) else {
+				continue;
+			};
+			let meta = |k: &str| {
+				it.get("metadata")
+					.and_then(|m| m.get(k))
+					.and_then(Value::as_str)
+					.map(str::to_string)
+			};
+			out.push(InstalledExt {
+				id: id.to_string(),
+				source: meta("source"),
+				relative_location: it.get("relativeLocation").and_then(Value::as_str).map(str::to_string),
+				target_platform: meta("targetPlatform"),
+			});
 		}
 	}
-	out.into_iter().collect()
+	out
+}
+
+/// The editor's `extensions/` dir (honours `IDESYNC_VSC_HOME`).
+pub fn extensions_dir(fam: &Family) -> Option<PathBuf> {
+	home_base().map(|h| h.join(fam.ext_dir))
+}
+
+/// Extension IDs (`publisher.name`, original casing, sorted/deduped) installed
+/// for this editor, regardless of install source.
+pub fn installed_extension_ids(fam: &Family) -> Vec<String> {
+	let ids: BTreeSet<String> = installed_manifest(fam).into_iter().map(|e| e.id).collect();
+	ids.into_iter().collect()
 }
 
 /// Lower-cased installed-extension IDs, for case-insensitive "already present?"
@@ -359,14 +443,33 @@ mod tests {
 		std::fs::create_dir_all(&ext).unwrap();
 		std::fs::write(
 			ext.join("extensions.json"),
-			r#"[{"identifier":{"id":"Rust-Lang.Rust-Analyzer"}},{"identifier":{"id":"esbenp.prettier-vscode"}}]"#,
+			r#"[
+				{"identifier":{"id":"Rust-Lang.Rust-Analyzer"},"metadata":{"source":"gallery","targetPlatform":"linux-x64"}},
+				{"identifier":{"id":"esbenp.prettier-vscode"}},
+				{"identifier":{"id":"local.demo"},"relativeLocation":"local.demo-0.1.0","metadata":{"source":"vsix"}}
+			]"#,
 		)
 		.unwrap();
 		std::env::set_var("IDESYNC_VSC_HOME", tmp.path());
 		let code = family("Code").unwrap();
 		let installed = installed_extensions(code);
+		let manifest = installed_manifest(code);
 		std::env::remove_var("IDESYNC_VSC_HOME");
 		assert!(installed.contains("rust-lang.rust-analyzer"));
 		assert!(installed.contains("esbenp.prettier-vscode"));
+		assert!(installed.contains("local.demo"));
+
+		let ra = manifest.iter().find(|e| e.id == "Rust-Lang.Rust-Analyzer").unwrap();
+		assert!(!ra.is_local());
+		assert_eq!(ra.target_platform.as_deref(), Some("linux-x64"));
+		// no metadata at all (old manifest shape) → treated as gallery
+		assert!(!manifest
+			.iter()
+			.find(|e| e.id == "esbenp.prettier-vscode")
+			.unwrap()
+			.is_local());
+		let local = manifest.iter().find(|e| e.id == "local.demo").unwrap();
+		assert!(local.is_local());
+		assert_eq!(local.relative_location.as_deref(), Some("local.demo-0.1.0"));
 	}
 }

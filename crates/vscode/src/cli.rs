@@ -1,14 +1,14 @@
 //! The `vsc` CLI namespace: `idesync vsc apply|check|create`. Pass-through sync
 //! of VSCode-family `settings.json` / `keybindings.json` / extensions.
 
-use crate::config::{VsCodeCfg, VsCodeExtensionsCfg};
-use crate::sync::{self, ExtensionInstall, Family};
+use crate::config::{LocalExtension, VsCodeCfg, VsCodeExtensionsCfg};
+use crate::sync::{self, ExtensionInstall, Family, PlanOpts};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgMatches, Args, FromArgMatches, Subcommand};
 use idesync_core::prompt;
 use idesync_core::runner::{print_diff, write_change};
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// `$schema` for generated configs: the schema attached to the latest GitHub
@@ -60,6 +60,9 @@ struct ApplyArgs {
 	/// Only editors listed in the config's `targets` (no auto-discovery).
 	#[arg(long)]
 	targets_only: bool,
+	/// Skip bundled local .vsix extensions (`extensions.local` in the config).
+	#[arg(long)]
+	no_local: bool,
 	/// Prompt for every option interactively (implied when no config is given).
 	#[arg(short, long)]
 	interactive: bool,
@@ -73,6 +76,9 @@ struct CheckArgs {
 	product: Option<String>,
 	#[arg(long)]
 	targets_only: bool,
+	/// Skip bundled local .vsix extensions (`extensions.local` in the config).
+	#[arg(long)]
+	no_local: bool,
 	/// Prompt for every option interactively (implied when no config is given).
 	#[arg(short, long)]
 	interactive: bool,
@@ -91,6 +97,10 @@ struct CreateArgs {
 	/// they follow the OS on apply. Literal `alt`/non-primary modifiers stay put.
 	#[arg(long)]
 	portable_keymap: bool,
+	/// Do not bundle locally-installed (non-marketplace) extensions as .vsix
+	/// files in the output dir.
+	#[arg(long)]
+	no_local: bool,
 	/// Prompt for every option interactively (implied when no --out is given).
 	#[arg(short, long)]
 	interactive: bool,
@@ -134,6 +144,7 @@ fn wizard_apply(a: &mut ApplyArgs) -> Result<()> {
 	a.targets_only = prompt::confirm("Only editors listed in `targets`?", a.targets_only)?;
 	a.dry_run = prompt::confirm("Dry run (show diffs, write nothing)?", a.dry_run)?;
 	a.no_backup = prompt::confirm("Skip backups of overwritten files?", a.no_backup)?;
+	a.no_local = !prompt::confirm("Install bundled local .vsix extensions (if any)?", !a.no_local)?;
 	Ok(())
 }
 
@@ -141,6 +152,7 @@ fn wizard_check(a: &mut CheckArgs) -> Result<()> {
 	a.config = Some(prompt_config(&a.config)?);
 	a.product = prompt_product(&a.product)?;
 	a.targets_only = prompt::confirm("Only editors listed in `targets`?", a.targets_only)?;
+	a.no_local = !prompt::confirm("Include bundled local .vsix extensions (if any)?", !a.no_local)?;
 	Ok(())
 }
 
@@ -155,6 +167,10 @@ fn wizard_create(a: &mut CreateArgs) -> Result<()> {
 	let chosen = prompt::multiselect("Editors to snapshot (none = all discovered)", &keys)?;
 	a.products = chosen.iter().map(|&i| keys[i].clone()).collect();
 	a.portable_keymap = prompt::confirm("Portable keymap (fold ctrl/cmd into mod)?", a.portable_keymap)?;
+	a.no_local = !prompt::confirm(
+		"Bundle locally-installed (non-marketplace) extensions as .vsix?",
+		!a.no_local,
+	)?;
 	Ok(())
 }
 
@@ -178,6 +194,14 @@ fn editors_for(cfg: &VsCodeCfg, product: &Option<String>, targets_only: bool) ->
 	Ok(editors)
 }
 
+/// The dir the config file lives in — bundled `.vsix` paths resolve against it.
+fn config_dir_of(config: &Path) -> PathBuf {
+	match config.parent() {
+		Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+		_ => PathBuf::from("."),
+	}
+}
+
 fn cmd_apply(mut a: ApplyArgs) -> Result<i32> {
 	if want_interactive(a.interactive, a.config.is_none())? {
 		wizard_apply(&mut a)?;
@@ -188,6 +212,11 @@ fn cmd_apply(mut a: ApplyArgs) -> Result<i32> {
 		.ok_or_else(|| anyhow!("config path required (pass it, or run on a terminal for the wizard)"))?;
 	let cfg = VsCodeCfg::load(&config)?;
 	let editors = editors_for(&cfg, &a.product, a.targets_only)?;
+	let config_dir = config_dir_of(&config);
+	let opts = PlanOpts {
+		config_dir: &config_dir,
+		no_local: a.no_local,
+	};
 
 	if !a.dry_run {
 		println!("⚠  Make sure the target editor is fully closed — it overwrites config on exit.\n");
@@ -200,7 +229,7 @@ fn cmd_apply(mut a: ApplyArgs) -> Result<i32> {
 		if !sync::is_installed(fam) {
 			println!("  (editor not found — files will be created)");
 		}
-		let plan = sync::build_plan(&cfg, fam)?;
+		let plan = sync::build_plan(&cfg, fam, &opts)?;
 		if plan.is_empty() {
 			println!("  already in sync\n");
 			continue;
@@ -243,10 +272,15 @@ fn cmd_check(mut a: CheckArgs) -> Result<i32> {
 		.ok_or_else(|| anyhow!("config path required (pass it, or run on a terminal for the wizard)"))?;
 	let cfg = VsCodeCfg::load(&config)?;
 	let editors = editors_for(&cfg, &a.product, a.targets_only)?;
+	let config_dir = config_dir_of(&config);
+	let opts = PlanOpts {
+		config_dir: &config_dir,
+		no_local: a.no_local,
+	};
 
 	let mut drift = 0usize;
 	for fam in editors {
-		let plan = sync::build_plan(&cfg, fam)?;
+		let plan = sync::build_plan(&cfg, fam, &opts)?;
 		let label = format!("{} (VSCode)", fam.key);
 		if plan.is_empty() {
 			println!("✓ {label}: in sync");
@@ -257,7 +291,9 @@ fn cmd_check(mut a: CheckArgs) -> Result<i32> {
 				println!("    {} {}", if ch.is_new() { "+" } else { "~" }, ch.rel);
 			}
 			for inst in &plan.installs {
-				println!("    + install {} extension(s): {}", inst.ids.len(), inst.ids.join(", "));
+				let mut names = inst.ids.clone();
+				names.extend(inst.local.iter().map(|(id, _)| format!("{id} (local .vsix)")));
+				println!("    + install {} extension(s): {}", names.len(), names.join(", "));
 			}
 		}
 	}
@@ -287,6 +323,9 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 	let mut settings = serde_json::Map::new();
 	let mut keybindings: Option<Vec<Value>> = None;
 	let mut install: BTreeSet<String> = BTreeSet::new();
+	// id → (installed dir, folder name, targetPlatform) for local (.vsix-installed)
+	// extensions; first editor wins.
+	let mut local_srcs: BTreeMap<String, (PathBuf, String, Option<String>)> = BTreeMap::new();
 	for fam in &editors {
 		let dir = sync::user_dir(fam)?;
 		if let Ok(text) = std::fs::read_to_string(dir.join("settings.json")) {
@@ -310,10 +349,59 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 				}
 			}
 		}
-		install.extend(sync::installed_extension_ids(fam));
+		for ext in sync::installed_manifest(fam) {
+			if !ext.is_local() {
+				install.insert(ext.id);
+				continue;
+			}
+			let Some(rel) = ext.relative_location else {
+				eprintln!(
+					"⚠ {}: no relativeLocation in the extensions manifest — cannot bundle it",
+					ext.id
+				);
+				continue;
+			};
+			let Some(dir) = sync::extensions_dir(fam).map(|d| d.join(&rel)) else {
+				continue;
+			};
+			local_srcs.entry(ext.id).or_insert((dir, rel, ext.target_platform));
+		}
 	}
-	let extensions = (!install.is_empty()).then(|| VsCodeExtensionsCfg {
+	// An id also installed from a marketplace (in another editor) needs no bundle.
+	local_srcs.retain(|id, _| !install.contains(id));
+
+	// Locally-installed extensions have no marketplace to download from, so they
+	// are repacked into .vsix bundles next to the config (unless --no-local).
+	let mut local: Vec<LocalExtension> = Vec::new();
+	if a.no_local {
+		if !local_srcs.is_empty() {
+			println!(
+				"skipping {} locally-installed (non-marketplace) extension(s) (--no-local): {}",
+				local_srcs.len(),
+				local_srcs.keys().cloned().collect::<Vec<_>>().join(", ")
+			);
+		}
+	} else {
+		for (id, (dir, rel, target_platform)) in &local_srcs {
+			let vsix_rel = format!("extensions/{rel}.vsix");
+			if let Err(e) = crate::vsix::repack(dir, &out.join(&vsix_rel)) {
+				eprintln!("⚠ could not bundle {id}: {e:#}");
+				continue;
+			}
+			if let Some(tp) = target_platform.as_deref().filter(|tp| *tp != "undefined") {
+				println!("⚠ {id} is platform-specific ({tp}) — its bundled .vsix only installs on matching machines");
+			}
+			println!("bundled {id} → {vsix_rel}");
+			local.push(LocalExtension {
+				id: id.clone(),
+				vsix: vsix_rel,
+			});
+		}
+	}
+
+	let extensions = (!install.is_empty() || !local.is_empty()).then(|| VsCodeExtensionsCfg {
 		install: install.into_iter().collect(),
+		local,
 	});
 	let cfg = VsCodeCfg {
 		schema: Some(SCHEMA_URL.to_string()),
@@ -328,11 +416,12 @@ fn cmd_create(mut a: CreateArgs) -> Result<i32> {
 	let cfg_path = out.join("idesync.json");
 	std::fs::write(&cfg_path, json).with_context(|| format!("writing {}", cfg_path.display()))?;
 	println!(
-		"Captured {} editor(s): {} setting(s), {} keybinding(s), {} extension(s)",
+		"Captured {} editor(s): {} setting(s), {} keybinding(s), {} extension(s) ({} bundled as .vsix)",
 		editors.len(),
 		cfg.settings.len(),
 		cfg.keybindings.as_ref().map_or(0, Vec::len),
-		cfg.extensions.as_ref().map_or(0, |e| e.install.len()),
+		cfg.extensions.as_ref().map_or(0, |e| e.install.len() + e.local.len()),
+		cfg.extensions.as_ref().map_or(0, |e| e.local.len()),
 	);
 	println!("wrote {}", cfg_path.display());
 	Ok(0)
@@ -346,9 +435,23 @@ fn run_ext_install(inst: &ExtensionInstall) -> Result<()> {
 			inst.editor
 		)
 	})?;
-	println!("  install {} extension(s):", inst.ids.len());
+	let missing_bundles: Vec<String> = inst
+		.local
+		.iter()
+		.filter(|(_, vsix)| !vsix.is_file())
+		.map(|(id, vsix)| format!("{id} ({})", vsix.display()))
+		.collect();
+	if !missing_bundles.is_empty() {
+		bail!(
+			"bundled .vsix file(s) missing next to the config: {}",
+			missing_bundles.join(", ")
+		);
+	}
+	println!("  install {} extension(s):", inst.ids.len() + inst.local.len());
 	println!("    {}", inst.command_display());
-	println!("    (downloads from the editor's Marketplace — make sure the editor is closed)");
+	println!(
+		"    (marketplace ids are downloaded, local .vsix installed from the bundle — make sure the editor is closed)"
+	);
 	let status = Command::new(cli)
 		.args(inst.args())
 		.status()
@@ -358,10 +461,9 @@ fn run_ext_install(inst: &ExtensionInstall) -> Result<()> {
 	}
 	let after = sync::installed_extensions(sync::family(&inst.editor).expect("known editor"));
 	let still_missing: Vec<&str> = inst
-		.ids
-		.iter()
+		.all_ids()
+		.into_iter()
 		.filter(|id| !after.contains(&id.to_ascii_lowercase()))
-		.map(String::as_str)
 		.collect();
 	if !still_missing.is_empty() {
 		println!("    ⚠ still missing after install: {}", still_missing.join(", "));

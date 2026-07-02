@@ -41,6 +41,27 @@
 					"type": "array",
 					"description": "Marketplace extension IDs (publisher.name) to ensure installed via the editor CLI. Only missing ones are installed.",
 					"items": { "type": "string", "examples": ["rust-lang.rust-analyzer", "esbenp.prettier-vscode"] }
+				},
+				"local": {
+					"type": "array",
+					"description": "Locally-installed (non-marketplace) extensions bundled as .vsix files by `create` (on by default; disable with --no-local). Each is installed from its bundled file via the editor CLI when the id is missing; skip on apply/check with --no-local.",
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": ["id", "vsix"],
+						"properties": {
+							"id": {
+								"type": "string",
+								"description": "Extension ID (publisher.name), used for the already-installed check.",
+								"examples": ["local.my-extension"]
+							},
+							"vsix": {
+								"type": "string",
+								"description": "Path to the bundled .vsix, relative to this config file.",
+								"examples": ["extensions/local.my-extension-0.1.0.vsix"]
+							}
+						}
+					}
 				}
 			}
 		}

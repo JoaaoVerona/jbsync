@@ -210,6 +210,118 @@ fn create_portable_keymap_folds_host_primary_into_mod() {
 	);
 }
 
+/// A minimal `.vsixmanifest` as VSCode leaves it inside an installed extension
+/// folder (the source for repacking a local extension into a `.vsix` bundle).
+const VSIX_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
+	<Metadata>
+		<Identity Language="en-US" Id="demo" Version="0.1.0" Publisher="local" />
+		<DisplayName>Demo</DisplayName>
+	</Metadata>
+</PackageManifest>
+"#;
+
+/// Seed a fake home: one marketplace extension plus one locally-installed
+/// (`"source": "vsix"`) extension with its on-disk folder.
+fn seed_local_ext_home(home: &std::path::Path) {
+	write(
+		home.join(".vscode/extensions/extensions.json"),
+		r#"[
+			{"identifier":{"id":"rust-lang.rust-analyzer","uuid":"x"},"metadata":{"source":"gallery"}},
+			{"identifier":{"id":"local.demo"},"version":"0.1.0","relativeLocation":"local.demo-0.1.0","metadata":{"source":"vsix"}}
+		]"#,
+	);
+	let ext = home.join(".vscode/extensions/local.demo-0.1.0");
+	write(ext.join(".vsixmanifest"), VSIX_MANIFEST);
+	write(
+		ext.join("package.json"),
+		r#"{"name":"demo","publisher":"local","version":"0.1.0"}"#,
+	);
+	write(ext.join("out/main.js"), "exports.activate = () => {};\n");
+}
+
+/// `vsc create` bundles a locally-installed (non-marketplace) extension as a
+/// `.vsix` next to the config (on by default); on another machine `check`
+/// plans its install from the bundle, and `--no-local` opts out.
+#[test]
+fn create_bundles_local_extensions_and_check_plans_their_install() {
+	let tmp = tempfile::tempdir().unwrap();
+	let vs_base = tmp.path().join("vscode-config");
+	fs::create_dir_all(vs_base.join("Code/User")).unwrap();
+	let home = tmp.path().join("home");
+	seed_local_ext_home(&home);
+
+	let out_dir = tmp.path().join("out");
+	let extra = [
+		("IDESYNC_VSC_CONFIG_HOME", vs_base.to_str().unwrap()),
+		("IDESYNC_VSC_HOME", home.to_str().unwrap()),
+	];
+	let out = vsc(&extra, &["create", "--out", out_dir.to_str().unwrap()]);
+	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+	// The .vsix bundle exists and the config references it under `local`,
+	// while the marketplace extension stays a plain `install` id.
+	assert!(out_dir.join("extensions/local.demo-0.1.0.vsix").is_file());
+	let captured = read(out_dir.join("idesync.json"));
+	let cfg: serde_json::Value = serde_json::from_str(&captured).unwrap();
+	let install = cfg["extensions"]["install"].as_array().unwrap();
+	assert!(install.iter().any(|v| v == "rust-lang.rust-analyzer"), "{captured}");
+	assert!(!install.iter().any(|v| v == "local.demo"), "{captured}");
+	let local = cfg["extensions"]["local"].as_array().unwrap();
+	assert_eq!(local[0]["id"], "local.demo", "{captured}");
+	assert_eq!(local[0]["vsix"], "extensions/local.demo-0.1.0.vsix", "{captured}");
+
+	// A machine that has the marketplace extension but not the local one:
+	// `check` plans the bundled install (drift), `--no-local` reports in sync.
+	let home2 = tmp.path().join("home2");
+	write(
+		home2.join(".vscode/extensions/extensions.json"),
+		r#"[{"identifier":{"id":"rust-lang.rust-analyzer","uuid":"x"},"metadata":{"source":"gallery"}}]"#,
+	);
+	let extra2 = [
+		("IDESYNC_VSC_CONFIG_HOME", vs_base.to_str().unwrap()),
+		("IDESYNC_VSC_HOME", home2.to_str().unwrap()),
+	];
+	let cfg_path = out_dir.join("idesync.json");
+	let chk = vsc(&extra2, &["check", cfg_path.to_str().unwrap()]);
+	let stdout = String::from_utf8_lossy(&chk.stdout);
+	assert!(!chk.status.success(), "missing local ext must drift: {stdout}");
+	assert!(stdout.contains("local.demo (local .vsix)"), "{stdout}");
+
+	let chk2 = vsc(&extra2, &["check", cfg_path.to_str().unwrap(), "--no-local"]);
+	assert!(
+		chk2.status.success(),
+		"--no-local must skip the bundle: {}",
+		String::from_utf8_lossy(&chk2.stdout)
+	);
+}
+
+/// `vsc create --no-local` captures marketplace ids but neither bundles the
+/// local extension nor lists it anywhere in the config.
+#[test]
+fn create_no_local_skips_bundling() {
+	let tmp = tempfile::tempdir().unwrap();
+	let vs_base = tmp.path().join("vscode-config");
+	fs::create_dir_all(vs_base.join("Code/User")).unwrap();
+	let home = tmp.path().join("home");
+	seed_local_ext_home(&home);
+
+	let out_dir = tmp.path().join("out");
+	let extra = [
+		("IDESYNC_VSC_CONFIG_HOME", vs_base.to_str().unwrap()),
+		("IDESYNC_VSC_HOME", home.to_str().unwrap()),
+	];
+	let out = vsc(&extra, &["create", "--out", out_dir.to_str().unwrap(), "--no-local"]);
+	assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+	assert!(!out_dir.join("extensions").exists(), "no bundles dir with --no-local");
+	let captured = read(out_dir.join("idesync.json"));
+	assert!(captured.contains("rust-lang.rust-analyzer"), "{captured}");
+	assert!(!captured.contains("local.demo"), "{captured}");
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	assert!(stdout.contains("skipping 1 locally-installed"), "{stdout}");
+}
+
 /// Off a TTY (output is captured), `vsc apply` with no config errors instead of
 /// hanging on the interactive prompt.
 #[test]

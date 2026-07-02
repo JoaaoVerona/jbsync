@@ -10,6 +10,7 @@ mod config;
 mod jsonc;
 mod keymap;
 mod sync;
+mod vsix;
 
 use anyhow::Result;
 use clap::{ArgMatches, Command};
